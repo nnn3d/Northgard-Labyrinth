@@ -8,13 +8,13 @@
 		},
 		"VikingsStarterRessources": {
 			"value": [
-				50,
+				100,
 				0,
 				0
 			]
 		},
 		"BaseFoodStock": {
-			"value": 50
+			"value": 100
 		},
 		"UncolonizePlayerTime": {
 			"value": 6000
@@ -32,7 +32,7 @@
 			"value": 120
 		},
 		"FoodStockIncrease": {
-			"value": 5
+			"value": 20
 		},
 		"FoodUpgradedStockIncrease": {
 			"value": 50
@@ -76,6 +76,13 @@
 			"values": {
 				"0": {
 					"val": 0.5
+				}
+			}
+		},
+		"BuildingUpkeep": {
+			"values": {
+				"0": {
+					"val": 10
 				}
 			}
 		},
@@ -912,6 +919,20 @@
 				},
 				"3": {
 					"val": 0
+				}
+			}
+		}
+	},
+	"conquestBonus": {
+		"BResBonus": {
+			"baseVals": {
+				"0": {
+					"val": 100
+				}
+			},
+			"advancedVals": {
+				"0": {
+					"val": 150
 				}
 			}
 		}

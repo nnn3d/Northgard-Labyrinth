@@ -25,6 +25,8 @@ var TBuilding = TDEF? (
 	TZone.buildings.copy()[0]
 ) :null;
 
+var TResourceKind: ResourceKind;
+
 // #endregion
 
 // #region Utils
@@ -251,12 +253,6 @@ function emitEvent(eventEmitter, eventData): Void {
 		eventEmitter.eventsMap.set(eventData.type, nextListeners);
 	}
 }
-
-
-//   #endregion
-
-//   #region FSM
-
 
 
 //   #endregion
@@ -870,33 +866,16 @@ function uiApplyOrderItems(activeQueueName) {
 
 // #endregion UI
 
-// #region HeroClass
-
-var THero = TDEF? {
-	unit: TUnitKind,
-} :null;
-
-// #endregion HeroClass
-
 // #region Net
 
 function _netArgs1(arg1: Dynamic): Array<Dynamic> {
-	var args: Array<Dynamic> = [];
-	args.push(arg1);
-	return args;
+	return [arg1];
 }
 function _netArgs2(arg1: Dynamic, arg2: Dynamic): Array<Dynamic> {
-	var args: Array<Dynamic> = [];
-	args.push(arg1);
-	args.push(arg2);
-	return args;
+	return [arg1, arg2];
 }
 function _netArgs3(arg1: Dynamic, arg2: Dynamic, arg3: Dynamic): Array<Dynamic> {
-	var args: Array<Dynamic> = [];
-	args.push(arg1);
-	args.push(arg2);
-	args.push(arg3);
-	return args;
+	return [arg1, arg2, arg3];
 }
 
 function netMoveCamera(plr: Player, target: {x: Float, y: Float}, speed: Float) {
@@ -906,18 +885,28 @@ function netMoveCameraAll(target: {x: Float, y: Float}, speed: Float) {
 	invokeAll('_netMoveCamera', _netArgs2(target, speed));
 }
 function _netMoveCamera(target: {x: Float, y: Float}, speed: Float) {
-	moveCamera(target, speed);
+	@async moveCamera(target, speed);
 }
 
 
 function netGenericNotify(plr: Player, text: String, target: Entity) {
-	invoke(plr, '_netMoveCamera', _netArgs2(text, target));
+	invoke(plr, '_netGenericNotify', _netArgs2(text, target));
 }
 function netGenericNotifyAll(text: String, target: Entity) {
-	invokeAll('_netMoveCamera', _netArgs2(text, target));
+	invokeAll('_netGenericNotify', _netArgs2(text, target));
 }
-function _GenericNotify(text: String, target: Entity) {
+function _netGenericNotify(text: String, target: Entity) {
 	me().genericNotify(text, target);
+}
+
+function netSfx(plr: Player, sfxKind: UiSfxKind, volume: Float) {
+	invoke(plr, '_netSfx', _netArgs2(sfxKind, volume));
+}
+function netSfxAll(sfxKind: UiSfxKind, volume: Float) {
+	invokeAll('_netSfx', _netArgs2(sfxKind, volume));
+}
+function _netSfx(sfxKind: UiSfxKind, volume: Float) {
+	sfx(sfxKind, volume);
 }
 
 // #endregion Net
@@ -970,8 +959,12 @@ var UI_ORDER = {
 		:{order: 'FOOTER', value: 5},
 }
 
+var MAX_ABITLITY_LEVEL = 4;
+
 var CONFIG = {
 	START_LIVES: 3,
+	DIFFICULTY_MAP: [1, 2.2, 4, 6],
+	HERO_REVIVE_COOLDOWN_SEC: 5,
 }
 
 // #endregion Global Constants
@@ -987,13 +980,19 @@ var USER_PLAYERS: Array<Player> = [];
 var ALLY_PLAYER: Player;
 var FOE_PLAYER: Player;
 
-var globalEvents = TEventEmitter;
+var USER_HOME_ZONE_MAP = makeStringMap();
+
+var DIFFICULTY_MOD: Float;
+
+var UI_ITEMS = TDEF? [TUIItem] : [];
+
+var gameEvents = TEventEmitter;
 function onUpdate(callback) {
 	if(TDEF) callback = function _(elapsed: Float, stop) { stop = function _(){}; };
 	var eventListener = TDEF? GlobalEventUpdateListener(null) :null;
 
 	function stop() {
-		removeEventListener(globalEvents, eventListener);
+		removeEventListener(gameEvents, eventListener);
 	}
 
 	eventListener = GlobalEventUpdateListener(
@@ -1002,11 +1001,19 @@ function onUpdate(callback) {
 		}
 	);
 
-	addEventListener(globalEvents, eventListener, false);
+	addEventListener(gameEvents, eventListener, false);
+
+	return eventListener;
+}
+
+function stopUpdate(eventListener) {
+	if (TDEF) eventListener = GlobalEventUpdateListener(null);
+
+	removeEventListener(gameEvents, eventListener);
 }
 
 function setupGlobalVars() {
-	globalEvents = NewEventEmitter();
+	gameEvents = NewEventEmitter();
 
 	@sync for (plr in state.players) {
 		@async plr.setModifierFlag(PlayerModifierFlag.NoConsumption);
@@ -1023,6 +1030,7 @@ function setupGlobalVars() {
 
 		if (!plr.isAI) {
 			USER_PLAYERS.push(plr);
+			USER_HOME_ZONE_MAP.set(plr.name, player.zones.copy()[0]);
 		}
 		if (plr.isAI && plr.isPlayer() && !plr.team.asPlayer().isAI) {
 			ALLY_PLAYER = plr;
@@ -1031,12 +1039,221 @@ function setupGlobalVars() {
 			FOE_PLAYER = plr;
 		}
 	}
+
+	DIFFICULTY_MOD = CONFIG.DIFFICULTY_MAP[USER_PLAYERS.length - 1];
 }
 
 // #endregion
 
 
 // #region Heroes
+
+
+function FnHeroAbilityInit(unit: Unit): Void {}
+function FnHeroAbilityActivate(unit: Unit): Void {}
+function FnHeroAbilityStop(): Void {}
+function FnHeroAbilityUpgrade(level: Int): Void {}
+
+var THeroAbility = TDEF? {
+	id: TString,
+	passive: TBool,
+
+	init: FnHeroAbilityInit,
+	activate: FnHeroAbilityActivate,
+	stop: FnHeroAbilityStop,
+	upgrade: FnHeroAbilityUpgrade,
+} :null;
+
+var THeroAbilityProps = TDEF? {
+	costRes: TResourceKind,
+	constAmount: TInt,
+	cooldown: TFloat,
+	duration: TFloat,
+	desctiption: TString,
+} :null;
+
+function FnHeroAbilityPropsByLevel(level: Int, unitKind: UnitKind) { return THeroAbilityProps; }
+function FnHeroAbilityCreate (plr: Player) {
+	return THeroAbility;
+}
+
+var THeroAbilityParams = TDEF? {
+	id: TString,
+	propsByLevel: FnHeroAbilityPropsByLevel,
+	create: FnHeroAbilityCreate,
+} :null;
+
+function NewHeroAbility(abilityParams, plr: Player) {
+	if(TDEF) abilityParams = THeroAbilityParams;
+	if(TDEF) return THeroAbility;
+
+	FnHeroAbilityCreate = abilityParams.create;
+	return FnHeroAbilityCreate(plr);
+}
+
+var THeroParams = TDEF? {
+	unitKind: TUnitKind,
+	ability1: THeroAbilityParams,
+	ability2: THeroAbilityParams,
+	ability3: THeroAbilityParams,
+	abilityUlt: THeroAbilityParams,
+} :null;
+
+function NewHero(heroParams, plr: Player) {
+	if(TDEF) heroParams = THeroParams;
+
+	return {
+		params: heroParams,
+		isAlive: false,
+
+		player: plr,
+		unit: null,
+
+		ability1: NewHeroAbility(heroParams.ability1, plr),
+		ability2: NewHeroAbility(heroParams.ability2, plr),
+		ability3: NewHeroAbility(heroParams.ability3, plr),
+		abilityUlt: NewHeroAbility(heroParams.abilityUlt, plr),
+
+		events: NewEventEmitter(),
+	}
+}
+
+var THero = TDEF? (
+	NewHero(null, null)
+) :null;
+
+// Hero Events
+
+var HeroEventDieType = 'hero:die';
+var THeroEventDiePayload = TDEF? {hero: THero, canRevive: TBool, zone: TZone } :null;
+function HeroEventDieListener (callback) {
+	if(TDEF) callback = function _(payload): Void { payload = THeroEventDiePayload; };
+	if(TDEF) return TEventListener;
+	return {
+		type: HeroEventDieType,
+		callback: callback,
+	}
+}
+function HeroEventDieData(payload) {
+	if(TDEF) payload = THeroEventDiePayload;
+	if(TDEF) return TEventData;
+	return {
+		type: HeroEventDieType,
+		payload: payload,
+	};
+}
+
+var HeroEventReviveType = 'hero:revive';
+var THeroEventRevivePayload = TDEF? {hero: THero, zone: TZone } :null;
+function HeroEventReviveListener (callback) {
+	if(TDEF) callback = function _(payload): Void { payload = THeroEventRevivePayload; };
+	if(TDEF) return TEventListener;
+	return {
+		type: HeroEventReviveType,
+		callback: callback,
+	}
+}
+function HeroEventReviveData(payload) {
+	if(TDEF) payload = THeroEventRevivePayload;
+	if(TDEF) return TEventData;
+	return {
+		type: HeroEventReviveType,
+		payload: payload,
+	};
+}
+
+// Hero Init
+
+function heroInit(hero, unit: Unit) {
+	if(TDEF) hero = THero;
+
+	hero.unit = unit;
+
+	FnHeroAbilityInit = hero.ability1.init; @async FnHeroAbilityInit(unit);
+	FnHeroAbilityInit = hero.ability2.init; @async FnHeroAbilityInit(unit);
+	FnHeroAbilityInit = hero.ability3.init; @async FnHeroAbilityInit(unit);
+	FnHeroAbilityInit = hero.abilityUlt.init; @async FnHeroAbilityInit(unit);
+
+	var state = {
+		lastZone: TDEF? TZone :null,
+	};
+
+	function onRevive() {
+		if (hero.isAlive) {
+			return;
+		}
+
+		hero.unit = state.lastZone.addUnit(hero.params.unitKind, 1, hero.player, true)[0];
+		hero.isAlive = true;
+
+		@async netMoveCamera(hero.player, {x: hero.unit.x, y: hero.unit.y}, null);
+
+		for (plr in USER_PLAYERS) {
+			var volume = plr == hero.player ? 5 : 1;
+			@async netSfx(plr, UiSfx.EndGameFameVictory, volume);
+		}
+
+		var eventData = HeroEventReviveData({hero: hero, zone: state.lastZone });
+		@async emitEvent(hero.events, eventData);
+		@async emitEvent(gameEvents, eventData);
+	}
+
+	function onDie() {
+		if (!hero.isAlive) {
+			return;
+		}
+		var zone = state.lastZone;
+		var canRevive = hero.player.getResource(Resource.Gemstone) > 0;
+
+		hero.unit = null;
+		hero.isAlive = false;
+
+		for (plr in USER_PLAYERS) {
+			var volume = plr == hero.player ? 5 : 1;
+			@async netSfx(plr, UiSfx.DeathmatchHeroDies, volume);
+		}
+
+		if (canRevive) {
+			netGenericNotify(hero.player, 'You died and revive in ' + CONFIG.HERO_REVIVE_COOLDOWN_SEC + ' seconds!', zone);
+		} else {
+			netGenericNotify(hero.player, 'You died, but has no lives to revive! Wait until your allies clean stage!', zone);
+		}
+
+		if (canRevive) {
+			hero.player.addResource(Resource.Gemstone, -1);
+		}
+
+		// cleanup auto revive from rule WarchiefElimination
+		var autoreviveUnit = USER_HOME_ZONE_MAP.get(hero.player.name).getUnit(hero.params.unitKind);
+		if (autoreviveUnit != null) {
+			autoreviveUnit.remove();
+		}
+
+		var eventData = HeroEventDieData({hero: hero, canRevive: canRevive, zone: state.lastZone });
+		@async emitEvent(hero.events, eventData);
+		@async emitEvent(gameEvents, eventData);
+
+		if (canRevive) {
+			wait(CONFIG.HERO_REVIVE_COOLDOWN_SEC);
+			onRevive();
+		}
+	}
+
+	onUpdate(function _(elapsed, stop) {
+		if (hero.unit != null && hero.unit.zone != null) {
+			state.lastZone = hero.unit.zone;
+		}
+		if (hero.isAlive && hero.unit != null) {
+			if (hero.unit.isRemoved()) {
+				@async onDie();
+			}
+		}
+	});
+}
+
+// Global Vars
+
+var HEROES = TDEF? [THero] : [];
 
 // #endregion Heroes
 
@@ -1102,6 +1319,21 @@ function dialogIntro() {
 	// test
 	drakkar(me(), ZONES.INIT, ZONES.INIT_WATER, 0, 0, [Unit.Berserker]);
 
+	var hero = me().getUnit(Unit.Berserker);
+
+	ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 5, FOE_PLAYER);
+
+	var home = me().zones.copy()[0];
+	me().discoverZone(home);
+
+	while (true) {
+		wait(1);
+		debug('has hero ' + hero);
+		debug('removed ' + (hero != null ? hero.isRemoved() : null));
+		if (hero != null) {
+			debug('zone ' + hero.zone);
+		}
+	}
 }
 
 // #endregion
@@ -1167,6 +1399,7 @@ function setupGlobal() {
 
 // Regular update is called every 0.5s
 function regularUpdate(elapsed : Float) {
-
-	// emitEvent(globalEvents, GlobalEventUpdateData({elapsed: elapsed}));
+	if (isHost()) {
+		emitEvent(gameEvents, GlobalEventUpdateData({elapsed: elapsed}));
+	}
 }
