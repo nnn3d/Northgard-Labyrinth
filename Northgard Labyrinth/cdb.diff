@@ -88,6 +88,9 @@
 		},
 		"BearAwake": {
 			"values": {
+				"0": {
+					"val": 0
+				},
 				"1": {
 					"val": 0.01
 				},
@@ -927,12 +930,12 @@
 		"BResBonus": {
 			"baseVals": {
 				"0": {
-					"val": 100
+					"val": 50
 				}
 			},
 			"advancedVals": {
 				"0": {
-					"val": 150
+					"val": 100
 				}
 			}
 		}

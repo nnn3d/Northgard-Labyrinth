@@ -42,6 +42,10 @@ function logColor(value: Dynamic, color: Int) {
 	}
 }
 
+function txtBr(value: Dynamic) {
+	return '[' + value + ']';
+}
+
 function arrayFindIndex(array: Dynamic, callback): Int {
 	if(TDEF) callback = function type(item: Dynamic, index: Int, array: Array<Dynamic>): Bool {};
 
@@ -241,6 +245,7 @@ function emitEvent(eventEmitter, eventData): Void {
 	var listeners = eventEmitter.eventsMap.get(eventData.type);
 
 	if (notNull(listeners))  {
+		var remove =
 		for (data in listeners) {
 			FnEventListener = data.callback;
 			@async FnEventListener(eventData.payload);
@@ -258,29 +263,6 @@ function emitEvent(eventEmitter, eventData): Void {
 //   #endregion
 
 // #endregion Types
-
-// #region Event
-
-var GlobalEventUpdateType = 'global:update';
-var TGlobalEventUpdatePayload = TDEF? {elapsed: TFloat} :null;
-function GlobalEventUpdateListener (callback) {
-	if(TDEF) callback = function _(payload): Void { payload = TGlobalEventUpdatePayload; };
-	if(TDEF) return TEventListener;
-	return {
-		type: GlobalEventUpdateType,
-		callback: callback,
-	}
-}
-function GlobalEventUpdateData(payload) {
-	if(TDEF) payload = TGlobalEventUpdatePayload;
-	if(TDEF) return TEventData;
-	return {
-		type: GlobalEventUpdateType,
-		payload: payload,
-	};
-}
-
-// #endregion
 
 // #region UI
 
@@ -940,6 +922,8 @@ var UI_QUEUE = {
 		:{queue: 'INIT', pageSize: null},
 	SELECT_CHAR: TDEF? TUIQueueNameEnum
 		:{queue: 'SELECT_CHAR', pageSize: null},
+	SELECT_ROOM: TDEF? TUIQueueNameEnum
+		:{queue: 'SELECT_ROOM', pageSize: null},
 	MAIN: TDEF? TUIQueueNameEnum
 		:{queue: 'MAIN', pageSize: null},
 	UPGRADE_ABILITIES: TDEF? TUIQueueNameEnum
@@ -961,10 +945,16 @@ var UI_ORDER = {
 
 var MAX_ABITLITY_LEVEL = 4;
 
+var CDB = {
+	XP_PER_LEVEL: 200,
+	POWER_PERCENT_PER_FAME: 1,
+}
+
 var CONFIG = {
 	START_LIVES: 3,
 	DIFFICULTY_MAP: [1, 2.2, 4, 6],
 	HERO_REVIVE_COOLDOWN_SEC: 5,
+	POWER_PERCENT_PER_LEVEL: 10
 }
 
 // #endregion Global Constants
@@ -987,30 +977,6 @@ var DIFFICULTY_MOD: Float;
 var UI_ITEMS = TDEF? [TUIItem] : [];
 
 var gameEvents = TEventEmitter;
-function onUpdate(callback) {
-	if(TDEF) callback = function _(elapsed: Float, stop) { stop = function _(){}; };
-	var eventListener = TDEF? GlobalEventUpdateListener(null) :null;
-
-	function stop() {
-		removeEventListener(gameEvents, eventListener);
-	}
-
-	eventListener = GlobalEventUpdateListener(
-		function _(payload) {
-			callback(payload.elapsed, stop);
-		}
-	);
-
-	addEventListener(gameEvents, eventListener, false);
-
-	return eventListener;
-}
-
-function stopUpdate(eventListener) {
-	if (TDEF) eventListener = GlobalEventUpdateListener(null);
-
-	removeEventListener(gameEvents, eventListener);
-}
 
 function setupGlobalVars() {
 	gameEvents = NewEventEmitter();
@@ -1043,14 +1009,70 @@ function setupGlobalVars() {
 	DIFFICULTY_MOD = CONFIG.DIFFICULTY_MAP[USER_PLAYERS.length - 1];
 }
 
+
+// Global events
+
+var GlobalEventUpdateType = 'global:update';
+var TGlobalEventUpdatePayload = TDEF? {elapsed: TFloat} :null;
+function GlobalEventUpdateListener (callback) {
+	if(TDEF) callback = function _(payload): Void { payload = TGlobalEventUpdatePayload; };
+	if(TDEF) return TEventListener;
+	return {
+		type: GlobalEventUpdateType,
+		callback: callback,
+	}
+}
+function GlobalEventUpdateData(payload) {
+	if(TDEF) payload = TGlobalEventUpdatePayload;
+	if(TDEF) return TEventData;
+	return {
+		type: GlobalEventUpdateType,
+		payload: payload,
+	};
+}
+
+function onUpdate(callback) {
+	if(TDEF) callback = function _(elapsed: Float, stop) { stop = function _(){}; };
+	var eventListener = TDEF? GlobalEventUpdateListener(null) :null;
+
+	function stop() {
+		removeEventListener(gameEvents, eventListener);
+	}
+
+	eventListener = GlobalEventUpdateListener(
+		function _(payload) {
+			callback(payload.elapsed, stop);
+		}
+	);
+
+	addEventListener(gameEvents, eventListener, false);
+
+	return eventListener;
+}
+
+function stopUpdate(eventListener) {
+	if (TDEF) eventListener = GlobalEventUpdateListener(null);
+
+	removeEventListener(gameEvents, eventListener);
+}
+
 // #endregion
 
 
-// #region Heroes
+// #region Hero Class
 
+var THeroPartial = TDEF? {
+	unitKind: TUnitKind,
+	player: TPlayer,
+	unit: TUnit,
+	events: TEventEmitter,
 
-function FnHeroAbilityInit(unit: Unit): Void {}
-function FnHeroAbilityActivate(unit: Unit): Void {}
+	isAlive: TBool,
+	lastZone: TZone,
+	level: TInt,
+} :null;
+
+function FnHeroAbilityActivate(): Void {}
 function FnHeroAbilityStop(): Void {}
 function FnHeroAbilityUpgrade(level: Int): Void {}
 
@@ -1058,74 +1080,80 @@ var THeroAbility = TDEF? {
 	id: TString,
 	passive: TBool,
 
-	init: FnHeroAbilityInit,
 	activate: FnHeroAbilityActivate,
 	stop: FnHeroAbilityStop,
 	upgrade: FnHeroAbilityUpgrade,
 } :null;
 
-var THeroAbilityProps = TDEF? {
+var THeroAbilityConfig = TDEF? {
 	costRes: TResourceKind,
-	constAmount: TInt,
+	costAmount: TInt,
 	cooldown: TFloat,
 	duration: TFloat,
 	desctiption: TString,
 } :null;
 
-function FnHeroAbilityPropsByLevel(level: Int, unitKind: UnitKind) { return THeroAbilityProps; }
-function FnHeroAbilityCreate (plr: Player) {
+function FnHeroAbilityConfigByLevel(level: Int) { return THeroAbilityConfig; }
+function FnHeroAbilityCreate (hero) {
+	hero = THeroPartial;
 	return THeroAbility;
 }
 
 var THeroAbilityParams = TDEF? {
 	id: TString,
-	propsByLevel: FnHeroAbilityPropsByLevel,
+	uiItemByLevel: [TUIItem],
+	configByLevel: FnHeroAbilityConfigByLevel,
 	create: FnHeroAbilityCreate,
 } :null;
 
-function NewHeroAbility(abilityParams, plr: Player) {
+function NewHeroAbility(abilityParams, hero) {
 	if(TDEF) abilityParams = THeroAbilityParams;
+	if(TDEF) hero = THeroPartial;
 	if(TDEF) return THeroAbility;
 
 	FnHeroAbilityCreate = abilityParams.create;
-	return FnHeroAbilityCreate(plr);
+	return FnHeroAbilityCreate(hero);
 }
 
 var THeroParams = TDEF? {
+	id: TString,
+
 	unitKind: TUnitKind,
+	description: TString,
+
 	ability1: THeroAbilityParams,
 	ability2: THeroAbilityParams,
 	ability3: THeroAbilityParams,
 	abilityUlt: THeroAbilityParams,
+
+	selectAction: TString,
 } :null;
 
-function NewHero(heroParams, plr: Player) {
-	if(TDEF) heroParams = THeroParams;
+var THero = TDEF? {
+	params: THeroParams,
 
-	return {
-		params: heroParams,
-		isAlive: false,
+	unitKind: TUnitKind,
 
-		player: plr,
-		unit: null,
+	player: TPlayer,
+	unit: TUnit,
 
-		ability1: NewHeroAbility(heroParams.ability1, plr),
-		ability2: NewHeroAbility(heroParams.ability2, plr),
-		ability3: NewHeroAbility(heroParams.ability3, plr),
-		abilityUlt: NewHeroAbility(heroParams.abilityUlt, plr),
+	ability1: THeroAbility,
+	ability2: THeroAbility,
+	ability3: THeroAbility,
+	abilityUlt: THeroAbility,
 
-		events: NewEventEmitter(),
-	}
-}
+	events: TEventEmitter,
 
-var THero = TDEF? (
-	NewHero(null, null)
-) :null;
+	// state
+	isAlive: TBool,
+	lastZone: TZone,
+	level: TInt,
+} :null;
 
 // Hero Events
 
 var HeroEventDieType = 'hero:die';
-var THeroEventDiePayload = TDEF? {hero: THero, canRevive: TBool, zone: TZone } :null;
+var THeroEventDiePayload = TDEF? { hero: THero, canRevive: TBool, zone: TZone } :null;
 function HeroEventDieListener (callback) {
 	if(TDEF) callback = function _(payload): Void { payload = THeroEventDiePayload; };
 	if(TDEF) return TEventListener;
@@ -1144,7 +1172,7 @@ function HeroEventDieData(payload) {
 }
 
 var HeroEventReviveType = 'hero:revive';
-var THeroEventRevivePayload = TDEF? {hero: THero, zone: TZone } :null;
+var THeroEventRevivePayload = TDEF? { hero: THero, zone: TZone } :null;
 function HeroEventReviveListener (callback) {
 	if(TDEF) callback = function _(payload): Void { payload = THeroEventRevivePayload; };
 	if(TDEF) return TEventListener;
@@ -1162,100 +1190,261 @@ function HeroEventReviveData(payload) {
 	};
 }
 
+var HeroEventLevelUpType = 'hero:levelUp';
+var THeroEventLevelUpPayload = TDEF? { hero: THero } :null;
+function HeroEventLevelUpListener (callback) {
+	if(TDEF) callback = function _(payload): Void { payload = THeroEventLevelUpPayload; };
+	if(TDEF) return TEventListener;
+	return {
+		type: HeroEventLevelUpType,
+		callback: callback,
+	}
+}
+function HeroEventLevelUpData(payload) {
+	if(TDEF) payload = THeroEventLevelUpPayload;
+	if(TDEF) return TEventData;
+	return {
+		type: HeroEventLevelUpType,
+		payload: payload,
+	};
+}
+
 // Hero Init
 
-function heroInit(hero, unit: Unit) {
+
+function _heroRevive(hero) {
 	if(TDEF) hero = THero;
 
-	hero.unit = unit;
-
-	FnHeroAbilityInit = hero.ability1.init; @async FnHeroAbilityInit(unit);
-	FnHeroAbilityInit = hero.ability2.init; @async FnHeroAbilityInit(unit);
-	FnHeroAbilityInit = hero.ability3.init; @async FnHeroAbilityInit(unit);
-	FnHeroAbilityInit = hero.abilityUlt.init; @async FnHeroAbilityInit(unit);
-
-	var state = {
-		lastZone: TDEF? TZone :null,
-	};
-
-	function onRevive() {
-		if (hero.isAlive) {
-			return;
-		}
-
-		hero.unit = state.lastZone.addUnit(hero.params.unitKind, 1, hero.player, true)[0];
-		hero.isAlive = true;
-
-		@async netMoveCamera(hero.player, {x: hero.unit.x, y: hero.unit.y}, null);
-
-		for (plr in USER_PLAYERS) {
-			var volume = plr == hero.player ? 5 : 1;
-			@async netSfx(plr, UiSfx.EndGameFameVictory, volume);
-		}
-
-		var eventData = HeroEventReviveData({hero: hero, zone: state.lastZone });
-		@async emitEvent(hero.events, eventData);
-		@async emitEvent(gameEvents, eventData);
+	if (hero.isAlive || hero.lastZone == null) {
+		return;
 	}
 
-	function onDie() {
-		if (!hero.isAlive) {
-			return;
-		}
-		var zone = state.lastZone;
-		var canRevive = hero.player.getResource(Resource.Gemstone) > 0;
+	hero.unit = hero.lastZone.addUnit(hero.params.unitKind, 1, hero.player, true)[0];
+	hero.isAlive = true;
 
-		hero.unit = null;
-		hero.isAlive = false;
+	@async netMoveCamera(hero.player, {x: hero.unit.x, y: hero.unit.y}, null);
 
-		for (plr in USER_PLAYERS) {
-			var volume = plr == hero.player ? 5 : 1;
-			@async netSfx(plr, UiSfx.DeathmatchHeroDies, volume);
-		}
-
-		if (canRevive) {
-			netGenericNotify(hero.player, 'You died and revive in ' + CONFIG.HERO_REVIVE_COOLDOWN_SEC + ' seconds!', zone);
-		} else {
-			netGenericNotify(hero.player, 'You died, but has no lives to revive! Wait until your allies clean stage!', zone);
-		}
-
-		if (canRevive) {
-			hero.player.addResource(Resource.Gemstone, -1);
-		}
-
-		// cleanup auto revive from rule WarchiefElimination
-		var autoreviveUnit = USER_HOME_ZONE_MAP.get(hero.player.name).getUnit(hero.params.unitKind);
-		if (autoreviveUnit != null) {
-			autoreviveUnit.remove();
-		}
-
-		var eventData = HeroEventDieData({hero: hero, canRevive: canRevive, zone: state.lastZone });
-		@async emitEvent(hero.events, eventData);
-		@async emitEvent(gameEvents, eventData);
-
-		if (canRevive) {
-			wait(CONFIG.HERO_REVIVE_COOLDOWN_SEC);
-			onRevive();
-		}
+	for (plr in USER_PLAYERS) {
+		var volume = plr == hero.player ? 5 : 1;
+		@async netSfx(plr, UiSfx.EndGameFameVictory, volume);
 	}
+
+	var eventData = HeroEventReviveData({hero: hero, zone: hero.lastZone });
+	@async emitEvent(hero.events, eventData);
+	@async emitEvent(gameEvents, eventData);
+}
+
+function _heroDie(hero) {
+	if(TDEF) hero = THero;
+
+	if (!hero.isAlive) {
+		return;
+	}
+	var zone = hero.lastZone;
+	var canRevive = hero.player.getResource(Resource.Gemstone) > 0;
+
+	hero.unit = null;
+	hero.isAlive = false;
+
+	for (plr in USER_PLAYERS) {
+		var volume = plr == hero.player ? 5 : 1;
+		@async netSfx(plr, UiSfx.DeathmatchHeroDies, volume);
+	}
+
+	if (canRevive) {
+		netGenericNotify(hero.player, 'You died and revive in ' + CONFIG.HERO_REVIVE_COOLDOWN_SEC + ' seconds!', zone);
+	} else {
+		netGenericNotify(hero.player, 'You died, but has no lives to revive! Wait until your allies clean stage!', zone);
+	}
+
+	if (canRevive) {
+		hero.player.addResource(Resource.Gemstone, -1);
+	}
+
+	// cleanup auto revive from rule WarchiefElimination
+	var autoreviveUnit = USER_HOME_ZONE_MAP.get(hero.player.name).getUnit(hero.params.unitKind);
+	if (autoreviveUnit != null) {
+		autoreviveUnit.remove();
+	}
+
+	var eventData = HeroEventDieData({hero: hero, canRevive: canRevive, zone: hero.lastZone });
+	@async emitEvent(hero.events, eventData);
+	@async emitEvent(gameEvents, eventData);
+
+	if (canRevive) {
+		wait(CONFIG.HERO_REVIVE_COOLDOWN_SEC);
+		_heroRevive(hero);
+	}
+}
+
+function _heroLevelUp(hero) {
+	if(TDEF) hero = THero;
+
+	if (hero.level * CDB.XP_PER_LEVEL > hero.player.getResource(Resource.MilitaryXP)) {
+		return;
+	}
+
+	hero.level += 1;
+
+	hero.player.addResource(Resource.Fame, CONFIG.POWER_PERCENT_PER_LEVEL * CDB.POWER_PERCENT_PER_FAME);
+
+	netGenericNotify(
+		hero.player,
+		"Level up!\n" +
+			"Attack power of your units increased by " + CONFIG.POWER_PERCENT_PER_LEVEL + "%",
+		hero.unit
+	);
+
+	@async netSfx(hero.player, UiSfx.StartGame, 5);
+
+	var eventData = HeroEventLevelUpData({hero: hero});
+	@async emitEvent(hero.events, eventData);
+	@async emitEvent(gameEvents, eventData);
+}
+
+
+function NewHero(heroParams, plr: Player, unit: Unit) {
+	if(TDEF) heroParams = THeroParams;
+
+	var hero = THero;
+	hero = {
+		params: heroParams,
+
+		unitKind: heroParams.unitKind,
+
+		player: plr,
+		unit: unit,
+
+		ability1: null,
+		ability2: null,
+		ability3: null,
+		abilityUlt: null,
+
+		events: NewEventEmitter(),
+
+		// state
+		isAlive: false,
+		lastZone: TDEF? TZone : null,
+		level: 1,
+	}
+
+	hero.ability1 = NewHeroAbility(hero.params.ability1, hero);
+	hero.ability2 = NewHeroAbility(hero.params.ability2, hero);
+	hero.ability3 = NewHeroAbility(hero.params.ability3, hero);
+	hero.abilityUlt = NewHeroAbility(hero.params.abilityUlt, hero);
 
 	onUpdate(function _(elapsed, stop) {
 		if (hero.unit != null && hero.unit.zone != null) {
-			state.lastZone = hero.unit.zone;
+			hero.lastZone = hero.unit.zone;
 		}
 		if (hero.isAlive && hero.unit != null) {
 			if (hero.unit.isRemoved()) {
-				@async onDie();
+				@async _heroDie(hero);
 			}
 		}
+		if (
+			hero.isAlive &&
+			hero.level * CDB.XP_PER_LEVEL < hero.player.getResource(Resource.MilitaryXP)
+		) {
+			@async _heroLevelUp(hero);
+		}
 	});
+
+	return hero;
+}
+
+var HERO_ABILITY_NUM = {
+	FIRST: 'FIRST',
+	SECOND: 'SECOND',
+	THIRD: 'THIRD',
+	ULT: 'ULT',
+}
+
+function heroActivateAbility(hero, abilityNum: String) {
+	if(TDEF) hero = THero;
+
+	var ability = THeroAbility;
+
+	switch (abilityNum) {
+		case HERO_ABILITY_NUM.FIRST:
+			ability = hero.ability1;
+		case HERO_ABILITY_NUM.SECOND:
+			ability = hero.ability2;
+		case HERO_ABILITY_NUM.THIRD:
+			ability = hero.ability3;
+		case HERO_ABILITY_NUM.ULT:
+			ability = hero.abilityUlt;
+	}
+
+	if (ability == null) {
+		log('Ability with num ' + abilityNum + ' not found');
+		return;
+	}
+
+	FnHeroAbilityActivate = ability.activate;
+	@async FnHeroAbilityActivate();
 }
 
 // Global Vars
 
+var HEROES_PARAMS = TDEF? [THeroParams] : [];
+
 var HEROES = TDEF? [THero] : [];
 
-// #endregion Heroes
+function getHeroByPlayer(plr: Player) {
+	for (hero in HEROES) {
+		if (hero.player == plr) {
+			return hero;
+		}
+	}
+	return null;
+}
+
+function netActivateAbility(plr: Player, abilityNum: String) {
+	invokeHost('_netActivateAbility', _netArgs2(plr, abilityNum));
+}
+function _netActivateAbility(plr: Player, abilityNum: String) {
+	var hero = getHeroByPlayer(plr);
+	if (hero != null) {
+		heroActivateAbility(hero, abilityNum);
+	}
+}
+
+function netSelectHero(plr: Player, hero) {
+	if(TDEF) hero = THeroParams;
+
+	invokeHost('_netSelectHero', _netArgs2(plr, hero.id));
+}
+function _netSelectHero(plr: Player, heroId: String) {
+	if (getHeroByPlayer(plr) != null) {
+		return;
+	}
+	for (heroParams in HEROES_PARAMS) {
+		if (heroParams.id == heroId) {
+			drakkar(me(), ZONES.INIT, ZONES.INIT_WATER, 0, 0, [heroParams.unitKind]);
+			var unit = plr.getUnit(heroParams.unitKind);
+
+			HEROES.push(
+				NewHero(heroParams, plr, unit)
+			);
+			break;
+		}
+	}
+}
+
+// #endregion
+
+// #region Heroes
+
+// var HeroBerserker = THeroParams;
+// HeroBerserker = {
+// 	id: 'Berserker',
+// 	unitKind: Unit.Berserker,
+// 	description: ""
+// };
+// HEROES_PARAMS.push(HeroBerserker);
+
+// #endregion
 
 // #region Main
 
@@ -1266,7 +1455,6 @@ function main() {
 // #endregion Main
 
 // #region Dialogs
-
 
 function dialogIntro() {
 	setCamera(ZONES.INIT);
@@ -1291,11 +1479,14 @@ function dialogIntro() {
 		font: FontKind.BigTitle,
 	};
 
+	sfx(UiSfx.NewFameTitle);
+
 	talk(
 		'Welcome to the Northgard Labyrinth!',
 		options,
 		ZONES.INIT
 	);
+
 
 	talk(
 		'It\'s time to test your POWER',
@@ -1303,7 +1494,7 @@ function dialogIntro() {
 		ZONES.INIT
 	);
 
-	shakeCamera();
+	shakeCamera(true);
 
 	talk(
 		'Oops, i see you coming... Try to find me!',
@@ -1317,23 +1508,7 @@ function dialogIntro() {
 	}
 
 	// test
-	drakkar(me(), ZONES.INIT, ZONES.INIT_WATER, 0, 0, [Unit.Berserker]);
-
-	var hero = me().getUnit(Unit.Berserker);
-
 	ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 5, FOE_PLAYER);
-
-	var home = me().zones.copy()[0];
-	me().discoverZone(home);
-
-	while (true) {
-		wait(1);
-		debug('has hero ' + hero);
-		debug('removed ' + (hero != null ? hero.isRemoved() : null));
-		if (hero != null) {
-			debug('zone ' + hero.zone);
-		}
-	}
 }
 
 // #endregion
@@ -1391,6 +1566,7 @@ function setupGlobal() {
 		}
 
 		@async plr.unlockTech(Tech.BearAwake, true);
+		@async plr.addBonus({id: ConquestBonus.BResBonus, resId: Resource.Food, isAdvanced: false });
 		@async plr.setResource(Resource.Gemstone, CONFIG.START_LIVES);
 	}
 }
@@ -1403,3 +1579,24 @@ function regularUpdate(elapsed : Float) {
 		emitEvent(gameEvents, GlobalEventUpdateData({elapsed: elapsed}));
 	}
 }
+
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
+// space holder
