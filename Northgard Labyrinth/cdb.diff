@@ -108,6 +108,11 @@
 			"announcedBefore": 1
 		}
 	},
+	"unit": {
+		"WhiteWolf": {
+			"flags": 69
+		}
+	},
 	"ai": {
 		"FoodFlux": {
 			"props": {
@@ -930,12 +935,30 @@
 		"BResBonus": {
 			"baseVals": {
 				"0": {
-					"val": 50
+					"val": 10
 				}
 			},
 			"advancedVals": {
 				"0": {
-					"val": 100
+					"val": 20
+				}
+			}
+		},
+		"BPopulation": {
+			"baseVals": {
+				"0": {
+					"val": 0
+				},
+				"1": {
+					"val": 94
+				}
+			},
+			"advancedVals": {
+				"0": {
+					"val": 0
+				},
+				"1": {
+					"val": 94
 				}
 			}
 		}

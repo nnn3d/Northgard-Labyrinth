@@ -25,6 +25,8 @@ var TBuilding = TDEF? (
 	TZone.buildings.copy()[0]
 ) :null;
 
+var TUiSfxKind: UiSfxKind;
+
 var TResourceKind: ResourceKind;
 
 // #endregion
@@ -208,13 +210,11 @@ function removeEventListener(eventEmitter, eventListener): Void {
 	var listeners = eventEmitter.eventsMap.get(eventListener.type);
 
 	if (notNull(listeners)) {
-		var nextListeners = [];
 		for (data in listeners) {
-			if (data.callback != eventListener.callback) {
-				listeners.push(data);
+			if (data.callback == eventListener.callback) {
+				listeners.remove(data);
 			}
 		}
-		eventEmitter.eventsMap.set(eventListener.type, nextListeners);
 	}
 }
 
@@ -241,21 +241,18 @@ function emitEvent(eventEmitter, eventData): Void {
 	if(TDEF) eventEmitter = TEventEmitter;
 	if(TDEF) eventData = TEventData;
 
-	var nextListeners = [];
 	var listeners = eventEmitter.eventsMap.get(eventData.type);
 
-	if (notNull(listeners))  {
-		var remove =
-		for (data in listeners) {
+	if (listeners != null)  {
+		var emitListeners = listeners.copy();
+		for (data in emitListeners) {
 			FnEventListener = data.callback;
 			@async FnEventListener(eventData.payload);
 
-			if (!data.once) {
-				nextListeners.push(data);
+			if (data.once) {
+				listeners.remove(data);
 			}
 		}
-
-		eventEmitter.eventsMap.set(eventData.type, nextListeners);
 	}
 }
 
@@ -324,6 +321,7 @@ var TUIQueueMap = TDEF? (function _() {
 var TUIPlayerState = TDEF? {
 	activeQueue: TUIQueueNameEnum,
 	queueMap: TUIQueueMap,
+	queueStack: [TUIQueueNameEnum],
 } :null;
 
 var TUIPlayerStateMap = TDEF? (function _() {
@@ -364,6 +362,7 @@ function _uiGetPlayerState(plr: Player) {
 		playerState = TDEF? TUIPlayerState : {
 			queueMap: makeStringMap(),
 			activeQueue: null,
+			queueStack: [],
 		};
 		_uiStateMap.set(plr.name, playerState);
 	}
@@ -513,9 +512,6 @@ function _uiNormalizePageOffset(queue): Bool {
 }
 
 function _uiUpdateActiveQueueList(plr: Player) {
-	var itemsToHide = TDEF? [TUIItem] : [];
-	var itemsToShow = TDEF? [TUIItem] : [];
-
 	var activeQueueName = _uiGetActiveQueueName(plr);
 	if (activeQueueName == null) {
 		return;
@@ -684,6 +680,27 @@ function uiSetActiveQueue(plr: Player, queueName) {
 	}
 }
 
+function uiAddActiveQueue(plr: Player, queueName) {
+	if(TDEF) queueName = TUIQueueNameEnum;
+
+
+	var playerState = _uiGetPlayerState(plr);
+	if (playerState.activeQueue != null && playerState.activeQueue != queueName) {
+		playerState.queueStack.push(playerState.activeQueue);
+
+		@async uiSetActiveQueue(plr, queueName);
+	}
+}
+
+function uiBackActiveQueue(plr: Player) {
+	var playerState = _uiGetPlayerState(plr);
+	if (playerState.queueStack.length > 0) {
+		var queueName = playerState.queueStack.pop();
+
+		@async uiSetActiveQueue(plr, queueName);
+	}
+}
+
 function uiGetActiveQueue(plr: Player) {
 	return _uiGetActiveQueueName(plr);
 }
@@ -751,7 +768,7 @@ function _uiInitItem(plr: Player, item) {
 	var queue = _uiGetQueue(plr, item.queueName);
 	queue.all.set(item.id, item);
 
-	if (item.initVisible) {
+	if (item.initVisible && item.listType == null) {
 		queue.active.set(item.id, item);
 	}
 
@@ -828,6 +845,10 @@ function uiApplyOrderItems(activeQueueName) {
 						},
 						item.button
 					);
+					// for some reason "val" in add() fn doesn't work
+					if (item.progress != null && item.progress.initCurrent != null) {
+						@async plr.objectives.setCurrentVal(item.id, item.progress.initCurrent);
+					}
 				}
 			}
 		}
@@ -891,27 +912,90 @@ function _netSfx(sfxKind: UiSfxKind, volume: Float) {
 	sfx(sfxKind, volume);
 }
 
+function netUiSetActiveQueue(plr: Player, queueName) {
+	if(TDEF) queueName = TUIQueueNameEnum;
+
+	invokeHost('_netUiSetActiveQueue', _netArgs2(plr, queueName));
+}
+function _netUiSetActiveQueue(plr: Player, queueName) {
+	if(TDEF) queueName = TUIQueueNameEnum;
+
+	uiSetActiveQueue(plr, queueName);
+}
+
+function netUiAddActiveQueue(plr: Player, queueName) {
+	if(TDEF) queueName = TUIQueueNameEnum;
+
+	invokeHost('_netUiAddActiveQueue', _netArgs2(plr, queueName));
+}
+function _netUiAddActiveQueue(plr: Player, queueName) {
+	if(TDEF) queueName = TUIQueueNameEnum;
+
+	uiAddActiveQueue(plr, queueName);
+}
+
+var BTN_UI_NEXT_PAGE = 'btnUiNextPage';
+function btnUiNextPage() {
+	invokeHost('_netUiNextPage', _netArgs1(me()));
+}
+function _netUiNextPage(plr: Player) {
+	@async uiListNextPage(plr);
+}
+
+var BTN_UI_BACK = 'btnUiBackPage';
+function btnUiBackPage() {
+	invokeHost('_netUiBack', _netArgs1(me()));
+}
+function _netUiBack(plr: Player) {
+	@async uiBackActiveQueue(plr);
+}
+
 // #endregion Net
 
 // #region Effects And Sounds
 
 function effectExplosion(zone: Zone, entity: Entity) {
+	wait(0.01);
 	var building = zone.createBuilding(Building.MagmaFlow, false, {pos: entity});
 	wait(0.01);
 	building.destroy();
 }
 
-var TUnitSound = {
+var TUnitSound = TDEF? {
 	unit: TUnitKind,
 	sfx: TString,
-};
-function playSound(sound, zone: Zone, entity: Entity) {
+} :null;
+function playUnitSound(sound, zone: Zone, entity: Entity) {
 	if(TDEF) sound = TUnitSound;
 
 	if (entity == null) entity = zone;
-	zone.addUnit(sound.unit);
+	var unit = spawnUnit(zone, null, sound.unit, entity.x, entity.y);
 
+	unit.sfx(sound.sfx);
+	wait(0.01);
+	unit.remove();
 }
+
+var TGlobalSound = TDEF? {
+	uiSfx: TUiSfxKind,
+	unitSfx: TUnitSound,
+	volume: TFloat,
+} :null;
+function playGlobalSound(sound, zone: Zone, entity: Entity) {
+	if(TDEF) sound = TGlobalSound;
+
+	if (sound.uiSfx != null) {
+		netSfxAll(sound.uiSfx, sound.volume);
+	} else if (sound.unitSfx != null) {
+		@async playUnitSound(sound.unitSfx, zone, entity);
+	}
+}
+
+var UnitSoundWolf = TUnitSound;
+UnitSoundWolf = {
+	unit: Unit.Wolf,
+	sfx: 'bite',
+};
 
 // #endregion
 
@@ -920,10 +1004,10 @@ function playSound(sound, zone: Zone, entity: Entity) {
 var UI_QUEUE = {
 	INIT: TDEF? TUIQueueNameEnum
 		:{queue: 'INIT', pageSize: null},
-	SELECT_CHAR: TDEF? TUIQueueNameEnum
-		:{queue: 'SELECT_CHAR', pageSize: null},
-	SELECT_ROOM: TDEF? TUIQueueNameEnum
-		:{queue: 'SELECT_ROOM', pageSize: null},
+	SELECT_HERO: TDEF? TUIQueueNameEnum
+		:{queue: 'SELECT_HERO', pageSize: 8},
+	HUB: TDEF? TUIQueueNameEnum
+		:{queue: 'HUB', pageSize: null},
 	MAIN: TDEF? TUIQueueNameEnum
 		:{queue: 'MAIN', pageSize: null},
 	UPGRADE_ABILITIES: TDEF? TUIQueueNameEnum
@@ -943,7 +1027,7 @@ var UI_ORDER = {
 		:{order: 'FOOTER', value: 5},
 }
 
-var MAX_ABITLITY_LEVEL = 4;
+var MAX_ABILITY_LEVEL = 4;
 
 var CDB = {
 	XP_PER_LEVEL: 200,
@@ -954,7 +1038,9 @@ var CONFIG = {
 	START_LIVES: 3,
 	DIFFICULTY_MAP: [1, 2.2, 4, 6],
 	HERO_REVIVE_COOLDOWN_SEC: 5,
-	POWER_PERCENT_PER_LEVEL: 10
+	POWER_PERCENT_PER_LEVEL: 10,
+	ABILITY_UPGRADE_COST: 1,
+	ABILITY_UPGRADE_RES: Resource.Stone,
 }
 
 // #endregion Global Constants
@@ -970,7 +1056,10 @@ var USER_PLAYERS: Array<Player> = [];
 var ALLY_PLAYER: Player;
 var FOE_PLAYER: Player;
 
-var USER_HOME_ZONE_MAP = makeStringMap();
+var PLAYER_MAIN_ZONE_MAP = makeStringMap();
+function getPlayerMainZone(plr: Player): Zone {
+	return PLAYER_MAIN_ZONE_MAP.get(plr.name);
+}
 
 var DIFFICULTY_MOD: Float;
 
@@ -996,7 +1085,6 @@ function setupGlobalVars() {
 
 		if (!plr.isAI) {
 			USER_PLAYERS.push(plr);
-			USER_HOME_ZONE_MAP.set(plr.name, player.zones.copy()[0]);
 		}
 		if (plr.isAI && plr.isPlayer() && !plr.team.asPlayer().isAI) {
 			ALLY_PLAYER = plr;
@@ -1004,6 +1092,7 @@ function setupGlobalVars() {
 		if (plr.isAI && plr.isPlayer() && plr.team.asPlayer().isAI) {
 			FOE_PLAYER = plr;
 		}
+		PLAYER_MAIN_ZONE_MAP.set(plr.name, player.zones.copy()[0]);
 	}
 
 	DIFFICULTY_MOD = CONFIG.DIFFICULTY_MAP[USER_PLAYERS.length - 1];
@@ -1053,7 +1142,9 @@ function onUpdate(callback) {
 function stopUpdate(eventListener) {
 	if (TDEF) eventListener = GlobalEventUpdateListener(null);
 
-	removeEventListener(gameEvents, eventListener);
+	if (eventListener != null) {
+		removeEventListener(gameEvents, eventListener);
+	}
 }
 
 // #endregion
@@ -1072,37 +1163,61 @@ var THeroPartial = TDEF? {
 	level: TInt,
 } :null;
 
-function FnHeroAbilityActivate(): Void {}
-function FnHeroAbilityStop(): Void {}
-function FnHeroAbilityUpgrade(level: Int): Void {}
-
-var THeroAbility = TDEF? {
-	id: TString,
-	passive: TBool,
-
-	activate: FnHeroAbilityActivate,
-	stop: FnHeroAbilityStop,
-	upgrade: FnHeroAbilityUpgrade,
-} :null;
 
 var THeroAbilityConfig = TDEF? {
 	costRes: TResourceKind,
 	costAmount: TInt,
 	cooldown: TFloat,
 	duration: TFloat,
-	desctiption: TString,
+	description: TString,
 } :null;
 
 function FnHeroAbilityConfigByLevel(level: Int) { return THeroAbilityConfig; }
-function FnHeroAbilityCreate (hero) {
+
+function FnHeroAbilityActivate(level: Int, duration: Float): Void {}
+function FnHeroAbilityUpgrade(level: Int): Void {}
+
+var HERO_ABILITY_STATE = {
+	READY: 'READY',
+	ACTIVE: 'ACTIVE',
+	COOLDOWN: 'COOLDOWN'
+}
+
+var THeroAbilityCommonParams = TDEF? {
+	name: TString,
+	passive: TBool,
+	sound: TGlobalSound,
+	configByLevel: FnHeroAbilityConfigByLevel,
+	// added on setup
+	uiItemByLevelIndex: [TUIItem],
+	uiUpgradeItem: TUIItem,
+} :null;
+
+var THeroAbility = TDEF? {
+	params: THeroAbilityCommonParams,
+
+	state: TString,
+	level: TInt,
+	activeUntil: TFloat,
+	cooldownUntil: TFloat,
+
+	activate: FnHeroAbilityActivate,
+	upgrade: FnHeroAbilityUpgrade,
+} :null;
+
+var THeroAbilityCallbacks = {
+	activate: FnHeroAbilityActivate,
+	upgrade: FnHeroAbilityUpgrade,
+}
+
+function FnHeroAbilityCreate (hero, params) {
 	hero = THeroPartial;
-	return THeroAbility;
+	params = THeroAbilityCommonParams;
+	return THeroAbilityCallbacks;
 }
 
 var THeroAbilityParams = TDEF? {
-	id: TString,
-	uiItemByLevel: [TUIItem],
-	configByLevel: FnHeroAbilityConfigByLevel,
+	common: THeroAbilityCommonParams,
 	create: FnHeroAbilityCreate,
 } :null;
 
@@ -1112,21 +1227,167 @@ function NewHeroAbility(abilityParams, hero) {
 	if(TDEF) return THeroAbility;
 
 	FnHeroAbilityCreate = abilityParams.create;
-	return FnHeroAbilityCreate(hero);
+	var callbacks = FnHeroAbilityCreate(hero, abilityParams.common);
+
+	return {
+		params: abilityParams.common,
+
+		state: HERO_ABILITY_STATE.READY,
+		level: 1,
+		activeUntil: null,
+		cooldownUntil: null,
+
+		activate: callbacks.activate,
+		upgrade: callbacks.upgrade,
+	}
+}
+
+// utils
+
+function intByLevel(level: Int, values: Array<Int>): Int {
+	var levelIndex = level - 1;
+	return values[levelIndex];
+}
+function floatByLevel(level: Int, values: Array<Float>): Float {
+	var levelIndex = level - 1;
+	return values[levelIndex];
+}
+
+// Hero ability
+
+function heroAbilityParamsGetConfig(abilityParams, level: Int) {
+	if(TDEF) abilityParams = THeroAbilityCommonParams;
+
+	FnHeroAbilityConfigByLevel = abilityParams.configByLevel;
+	return FnHeroAbilityConfigByLevel(level);
+}
+
+function heroAbilityGetConfig(ability) {
+	if(TDEF) ability = THeroAbility;
+
+	return heroAbilityParamsGetConfig(ability.params, ability.level);
+}
+
+function _heroAbilityGetNextState(ability) {
+	if(TDEF) ability = THeroAbility;
+
+	if (ability.activeUntil != null && ability.activeUntil > state.time) {
+		return HERO_ABILITY_STATE.ACTIVE;
+	}
+	if (ability.cooldownUntil != null && ability.cooldownUntil > state.time) {
+		return HERO_ABILITY_STATE.COOLDOWN;
+	}
+
+	return HERO_ABILITY_STATE.READY;
+}
+
+function _heroAbilityProcessState(hero, ability, config) {
+	if(TDEF) hero = THeroPartial;
+	if(TDEF) ability = THeroAbility;
+	if(TDEF) config = THeroAbilityConfig;
+
+	var uiItem = ability.params.uiItemByLevelIndex[ability.level - 1];
+
+	var nextState = _heroAbilityGetNextState(ability);
+
+	if (nextState != ability.state) {
+		switch (nextState) {
+			case HERO_ABILITY_STATE.READY:
+				@async hero.player.objectives.setGoalVal(uiItem.id, 1);
+				@async hero.player.objectives.setCurrentVal(uiItem.id, 1);
+				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Empty);
+			case HERO_ABILITY_STATE.ACTIVE:
+				@async hero.player.objectives.setGoalVal(uiItem.id, config.duration);
+				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Done);
+			case HERO_ABILITY_STATE.COOLDOWN:
+				@async hero.player.objectives.setGoalVal(uiItem.id, config.cooldown);
+				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Missed);
+		}
+		ability.state = nextState;
+	}
+
+	switch (ability.state) {
+		case HERO_ABILITY_STATE.ACTIVE:
+			var value = math.max(0, ability.activeUntil - state.time);
+			@async hero.player.objectives.setCurrentVal(uiItem.id, value);
+		case HERO_ABILITY_STATE.COOLDOWN:
+			var value = math.max(0, ability.cooldownUntil - state.time);
+			@async hero.player.objectives.setCurrentVal(uiItem.id, value);
+	}
+}
+
+function _heroAbilityActivate(hero, ability) {
+	if(TDEF) hero = THeroPartial;
+	if(TDEF) ability = THeroAbility;
+
+	if (ability.state != HERO_ABILITY_STATE.READY || ability.activate == null || !hero.isAlive) {
+		return;
+	}
+
+	var config = heroAbilityGetConfig(ability);
+
+	if (config.cooldown != null) {
+		ability.cooldownUntil = state.time + config.cooldown;
+	}
+	if (config.duration != null) {
+		ability.activeUntil = state.time + config.duration;
+	}
+
+	_heroAbilityProcessState(hero, ability, config);
+
+	onUpdate(function _(elapsed, stop) {
+		_heroAbilityProcessState(hero, ability, config);
+
+		if (ability.state == HERO_ABILITY_STATE.READY) {
+			stop();
+		}
+	});
+
+	FnHeroAbilityActivate = ability.activate;
+	@async FnHeroAbilityActivate(ability.level, config.duration);
+}
+
+function _heroAbilityUpgrade(hero, ability) {
+	if(TDEF) hero = THeroPartial;
+	if(TDEF) ability = THeroAbility;
+
+	if (ability.level >= MAX_ABILITY_LEVEL) {
+		return;
+	}
+
+	var prevLevel = ability.level;
+	var nextLevel = prevLevel + 1;
+
+	ability.level = nextLevel;
+
+	@async hero.player.objectives.setCurrentVal(ability.params.uiUpgradeItem.id, nextLevel);
+	if (nextLevel >= MAX_ABILITY_LEVEL) {
+	@async hero.player.objectives.setStatus(ability.params.uiUpgradeItem.id, OStatus.Done);
+	}
+
+	@async uiSetItemsVisible(hero.player, [ability.params.uiItemByLevelIndex[prevLevel - 1]], false);
+	@async uiSetItemsVisible(hero.player, [ability.params.uiItemByLevelIndex[nextLevel - 1]], true);
+
+	if (ability.upgrade != null) {
+		FnHeroAbilityUpgrade = ability.upgrade;
+		@async FnHeroAbilityUpgrade(nextLevel);
+	}
+}
+
+function FnHeroParamsInit(hero) {
+	hero = THeroPartial;
 }
 
 var THeroParams = TDEF? {
 	id: TString,
-
 	unitKind: TUnitKind,
 	description: TString,
-
-	ability1: THeroAbilityParams,
-	ability2: THeroAbilityParams,
-	ability3: THeroAbilityParams,
-	abilityUlt: THeroAbilityParams,
-
+	abilities: [THeroAbilityParams],
+	init: FnHeroParamsInit,
 	selectAction: TString,
+
+	// added on setup
+	selectUiItem: TUIItem,
 } :null;
 
 var THero = TDEF? {
@@ -1137,10 +1398,7 @@ var THero = TDEF? {
 	player: TPlayer,
 	unit: TUnit,
 
-	ability1: THeroAbility,
-	ability2: THeroAbility,
-	ability3: THeroAbility,
-	abilityUlt: THeroAbility,
+	abilities: [THeroAbility],
 
 	events: TEventEmitter,
 
@@ -1209,6 +1467,25 @@ function HeroEventLevelUpData(payload) {
 	};
 }
 
+var HeroEventZoneChangeType = 'hero:zoneChange';
+var THeroEventZoneChangePayload = TDEF? { hero: THero, prevZone: TZone } :null;
+function HeroEventZoneChangeListener (callback) {
+	if(TDEF) callback = function _(payload): Void { payload = THeroEventZoneChangePayload; };
+	if(TDEF) return TEventListener;
+	return {
+		type: HeroEventZoneChangeType,
+		callback: callback,
+	}
+}
+function HeroEventZoneChangeData(payload) {
+	if(TDEF) payload = THeroEventZoneChangePayload;
+	if(TDEF) return TEventData;
+	return {
+		type: HeroEventZoneChangeType,
+		payload: payload,
+	};
+}
+
 // Hero Init
 
 
@@ -1252,7 +1529,7 @@ function _heroDie(hero) {
 	}
 
 	if (canRevive) {
-		netGenericNotify(hero.player, 'You died and revive in ' + CONFIG.HERO_REVIVE_COOLDOWN_SEC + ' seconds!', zone);
+		netGenericNotify(hero.player, 'You died, spent 1[Gemstone] and revive in ' + CONFIG.HERO_REVIVE_COOLDOWN_SEC + ' seconds!', zone);
 	} else {
 		netGenericNotify(hero.player, 'You died, but has no lives to revive! Wait until your allies clean stage!', zone);
 	}
@@ -1262,7 +1539,7 @@ function _heroDie(hero) {
 	}
 
 	// cleanup auto revive from rule WarchiefElimination
-	var autoreviveUnit = USER_HOME_ZONE_MAP.get(hero.player.name).getUnit(hero.params.unitKind);
+	var autoreviveUnit = getPlayerMainZone(hero.player).getUnit(hero.params.unitKind);
 	if (autoreviveUnit != null) {
 		autoreviveUnit.remove();
 	}
@@ -1302,9 +1579,9 @@ function _heroLevelUp(hero) {
 	@async emitEvent(gameEvents, eventData);
 }
 
-
 function NewHero(heroParams, plr: Player, unit: Unit) {
 	if(TDEF) heroParams = THeroParams;
+	if(TDEF) return THero;
 
 	var hero = THero;
 	hero = {
@@ -1315,27 +1592,43 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 		player: plr,
 		unit: unit,
 
-		ability1: null,
-		ability2: null,
-		ability3: null,
-		abilityUlt: null,
+		abilities: [],
 
 		events: NewEventEmitter(),
 
-		// state
-		isAlive: false,
-		lastZone: TDEF? TZone : null,
+		isAlive: true,
+		lastZone: unit.zone,
 		level: 1,
 	}
 
-	hero.ability1 = NewHeroAbility(hero.params.ability1, hero);
-	hero.ability2 = NewHeroAbility(hero.params.ability2, hero);
-	hero.ability3 = NewHeroAbility(hero.params.ability3, hero);
-	hero.abilityUlt = NewHeroAbility(hero.params.abilityUlt, hero);
+	for (abilityParams in hero.params.abilities) {
+		hero.abilities.push(
+			NewHeroAbility(abilityParams, hero)
+		);
+	}
+
+	var uiItems = [
+		for (ability in hero.abilities) ability.params.uiItemByLevelIndex[0]
+	].concat([
+		for (ability in hero.abilities) ability.params.uiUpgradeItem
+	]);
+	@async uiSetItemsVisible(hero.player, uiItems, true);
+
+	if (heroParams.init != null) {
+		FnHeroParamsInit = heroParams.init;
+		@async FnHeroParamsInit(hero);
+	}
 
 	onUpdate(function _(elapsed, stop) {
 		if (hero.unit != null && hero.unit.zone != null) {
+			var prevZone = hero.lastZone;
 			hero.lastZone = hero.unit.zone;
+
+			if (prevZone != null) {
+				var eventData = HeroEventZoneChangeData({hero: hero, prevZone: prevZone});
+				@async emitEvent(hero.events, eventData);
+				@async emitEvent(gameEvents, eventData);
+			}
 		}
 		if (hero.isAlive && hero.unit != null) {
 			if (hero.unit.isRemoved()) {
@@ -1353,36 +1646,65 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 	return hero;
 }
 
-var HERO_ABILITY_NUM = {
-	FIRST: 'FIRST',
-	SECOND: 'SECOND',
-	THIRD: 'THIRD',
-	ULT: 'ULT',
-}
-
-function heroActivateAbility(hero, abilityNum: String) {
+function heroActivateAbility(hero, abilityIndex: Int) {
 	if(TDEF) hero = THero;
 
-	var ability = THeroAbility;
-
-	switch (abilityNum) {
-		case HERO_ABILITY_NUM.FIRST:
-			ability = hero.ability1;
-		case HERO_ABILITY_NUM.SECOND:
-			ability = hero.ability2;
-		case HERO_ABILITY_NUM.THIRD:
-			ability = hero.ability3;
-		case HERO_ABILITY_NUM.ULT:
-			ability = hero.abilityUlt;
-	}
+	var ability = hero.abilities[abilityIndex];
 
 	if (ability == null) {
-		log('Ability with num ' + abilityNum + ' not found');
+		log('Ability to activate with index ' + abilityIndex + ' for hero ' + hero.params.id + ' not found');
 		return;
 	}
 
-	FnHeroAbilityActivate = ability.activate;
-	@async FnHeroAbilityActivate();
+	if (!hero.isAlive) {
+		netGenericNotify(hero.player, 'You can\'t use abilities while dead', null);
+		return;
+	}
+
+	if (ability.state != HERO_ABILITY_STATE.READY) {
+		netGenericNotify(hero.player, 'Ability "' + ability.params.name + '" is not ready!', null);
+		return;
+	}
+
+	var config = heroAbilityGetConfig(ability);
+	if (hero.player.getResource(config.costRes) < config.costAmount) {
+		netGenericNotify(hero.player, 'You need ' + config.costAmount + txtBr(config.costRes) + ' to activate "' + ability.params.name + '" ability!', null);
+		return;
+	}
+	@async hero.player.addResource(config.costRes, config.costAmount * -1);
+
+	@async _heroAbilityActivate(hero, ability);
+
+	if (ability.params.sound != null) {
+		@async playGlobalSound(ability.params.sound, hero.lastZone, hero.unit);
+	}
+
+}
+
+function heroUpgradeAbility(hero, abilityIndex: Int) {
+	if(TDEF) hero = THero;
+
+	var ability = hero.abilities[abilityIndex];
+
+	if (ability == null) {
+		log('Ability to upgrade with index ' + abilityIndex + ' for hero ' + hero.params.id + ' not found');
+		return;
+	}
+
+	if (ability.level >= MAX_ABILITY_LEVEL) {
+		netGenericNotify(hero.player, 'Ability "' + ability.params.name + '" already has max level!', null);
+		return;
+	}
+
+	if (hero.player.getResource(CONFIG.ABILITY_UPGRADE_RES) < CONFIG.ABILITY_UPGRADE_COST) {
+		netGenericNotify(hero.player, 'You need ' + CONFIG.ABILITY_UPGRADE_COST + txtBr(CONFIG.ABILITY_UPGRADE_RES) + ' to upgrade "' + ability.params.name + '" ability!', null);
+		return;
+	}
+	@async hero.player.addResource(CONFIG.ABILITY_UPGRADE_RES, CONFIG.ABILITY_UPGRADE_COST * -1);
+
+	@async netSfx(hero.player, UiSfx.ForgeSword, 5);
+
+	@async _heroAbilityUpgrade(hero, ability);
 }
 
 // Global Vars
@@ -1400,13 +1722,23 @@ function getHeroByPlayer(plr: Player) {
 	return null;
 }
 
-function netActivateAbility(plr: Player, abilityNum: String) {
-	invokeHost('_netActivateAbility', _netArgs2(plr, abilityNum));
+function netActivateAbility(plr: Player, abilityIndex: Int) {
+	invokeHost('_netActivateAbility', _netArgs2(plr, abilityIndex));
 }
-function _netActivateAbility(plr: Player, abilityNum: String) {
+function _netActivateAbility(plr: Player, abilityIndex: Int) {
 	var hero = getHeroByPlayer(plr);
 	if (hero != null) {
-		heroActivateAbility(hero, abilityNum);
+		heroActivateAbility(hero, abilityIndex);
+	}
+}
+
+function netUpgradeAbility(plr: Player, abilityIndex: Int) {
+	invokeHost('_netUpgradeAbility', _netArgs2(plr, abilityIndex));
+}
+function _netUpgradeAbility(plr: Player, abilityIndex: Int) {
+	var hero = getHeroByPlayer(plr);
+	if (hero != null) {
+		heroUpgradeAbility(hero, abilityIndex);
 	}
 }
 
@@ -1419,15 +1751,273 @@ function _netSelectHero(plr: Player, heroId: String) {
 	if (getHeroByPlayer(plr) != null) {
 		return;
 	}
-	for (heroParams in HEROES_PARAMS) {
-		if (heroParams.id == heroId) {
-			drakkar(me(), ZONES.INIT, ZONES.INIT_WATER, 0, 0, [heroParams.unitKind]);
-			var unit = plr.getUnit(heroParams.unitKind);
 
-			HEROES.push(
-				NewHero(heroParams, plr, unit)
-			);
-			break;
+	for (hero in HEROES) {
+		if (hero.params.id == heroId) {
+			return;
+		}
+	}
+
+	function handleHero(heroParams) {
+		if(TDEF) heroParams = THeroParams;
+
+		drakkar(me(), ZONES.INIT, ZONES.INIT_WATER, 0, 0, [heroParams.unitKind]);
+		var unit = plr.getUnit(heroParams.unitKind);
+
+		HEROES.push(
+			NewHero(heroParams, plr, unit)
+		);
+
+		@sync for (plr in USER_PLAYERS) {
+			@async plr.objectives.setStatus(heroParams.selectUiItem.id, OStatus.Missed);
+		}
+
+		@async uiSetActiveQueue(plr, UI_QUEUE.MAIN);
+	}
+
+	@sync for (heroParams in HEROES_PARAMS) {
+		if (heroParams.id == heroId) {
+			@async handleHero(heroParams);
+			return;
+		}
+	}
+}
+
+// Hero Prepare UI
+
+var BTN_ACTIVATE_ABILITY_BASE = 'btnActivateAbility';
+function btnActivateAbility0() {
+	netActivateAbility(me(), 0);
+}
+function btnActivateAbility1() {
+	netActivateAbility(me(), 0);
+}
+function btnActivateAbility2() {
+	netActivateAbility(me(), 0);
+}
+function btnActivateAbility3() {
+	netActivateAbility(me(), 0);
+}
+function btnActivateAbility4() {
+	netActivateAbility(me(), 0);
+}
+
+var BTN_UPGRADE_ABILITY_BASE = 'btnUpgradeAbility';
+function btnUpgradeAbility0() {
+	netUpgradeAbility(me(), 0);
+}
+function btnUpgradeAbility1() {
+	netUpgradeAbility(me(), 0);
+}
+function btnUpgradeAbility2() {
+	netUpgradeAbility(me(), 0);
+}
+function btnUpgradeAbility3() {
+	netUpgradeAbility(me(), 0);
+}
+function btnUpgradeAbility4() {
+	netUpgradeAbility(me(), 0);
+}
+
+var BTN_GO_TO_UPGRADE_ABILITIES = 'btnGoToUpgradeAbilities';
+function btnGoToUpgradeAbilities() {
+	netUiAddActiveQueue(me(), UI_QUEUE.UPGRADE_ABILITIES);
+}
+
+function setupHubUi() {
+	@async uiAddItem({
+		id: null,
+		desc: 'Go to smith',
+		progress: null,
+		button: {
+			name: 'Upgrade abilities',
+			action: BTN_GO_TO_UPGRADE_ABILITIES,
+		},
+		queueName: UI_QUEUE.HUB,
+		orderName: UI_ORDER.BODY,
+		listType: null,
+		initVisible: true,
+	});
+}
+
+function setupHeroesUi(heroesParams) {
+	if(TDEF) heroesParams = [THeroParams];
+
+	// select hero
+	@async uiAddItem({
+		id: null,
+		desc: 'SELECT YOUR HERO\n',
+		progress: null,
+		button: null,
+		queueName: UI_QUEUE.SELECT_HERO,
+		orderName: UI_ORDER.HEADER,
+		listType: null,
+		initVisible: true,
+	});
+
+	@async uiAddItem({
+		id: null,
+		desc: '--------',
+		progress: {
+			initMax: null,
+			initCurrent: null,
+		},
+		button: {
+			name: 'Next heroes page',
+			action: BTN_UI_NEXT_PAGE,
+		},
+		queueName: UI_QUEUE.SELECT_HERO,
+		orderName: UI_ORDER.LIST_NAV,
+		listType: UI_LIST_TYPE.NAV,
+		initVisible: false,
+	});
+
+	// upgrade abilities
+	@async uiAddItem({
+		id: null,
+		desc: 'UPGRADE ABILITY',
+		progress: null,
+		button: null,
+		queueName: UI_QUEUE.UPGRADE_ABILITIES,
+		orderName: UI_ORDER.HEADER,
+		listType: null,
+		initVisible: true,
+	});
+
+	@async uiAddItem({
+		id: null,
+		desc: '--------',
+		progress: null,
+		button: {
+			name: 'Back',
+			action: BTN_UI_BACK,
+		},
+		queueName: UI_QUEUE.UPGRADE_ABILITIES,
+		orderName: UI_ORDER.FOOTER,
+		listType: null,
+		initVisible: true,
+	});
+
+	function processAbility(heroParams, abilityParams) {
+		if(TDEF) heroParams = THeroParams;
+		if(TDEF) abilityParams = THeroAbilityParams;
+
+
+		var index = heroParams.abilities.indexOf(abilityParams);
+
+		var passiveText = abilityParams.common.passive ? ' passive' : '';
+		var desc = txtBr(heroParams.unitKind) + passiveText + ' ability ' + abilityParams.common.name + ' by level:';
+
+		for (levelIndex in 0...MAX_ABILITY_LEVEL) {
+			var level = levelIndex + 1;
+
+			var config = heroAbilityParamsGetConfig(abilityParams.common, level);
+
+			desc = desc + '\n Level ' + level + ': ' + config.description;
+			if (config.cooldown != null) {
+				desc += ' Cooldown ' + config.cooldown + ' sec.';
+			}
+			if (config.duration != null) {
+				desc += ' Duration ' + config.duration + ' sec.';
+			}
+			desc += ' Costs ' + config.costAmount + txtBr(config.costRes) + '.';
+		}
+
+		var upgradeUiItem = TUIItem;
+		upgradeUiItem = {
+			id: null,
+			desc: desc,
+			progress: {
+				initMax: MAX_ABILITY_LEVEL,
+				initCurrent: 1,
+			},
+			button: {
+				name: 'Upgrade ' + ' ' + CONFIG.ABILITY_UPGRADE_COST + txtBr(CONFIG.ABILITY_UPGRADE_RES),
+				action: BTN_UPGRADE_ABILITY_BASE + index,
+			},
+			queueName: UI_QUEUE.UPGRADE_ABILITIES,
+			orderName: UI_ORDER.BODY,
+			listType: null,
+			initVisible: false,
+		};
+
+		abilityParams.common.uiUpgradeItem = upgradeUiItem;
+
+		@async uiAddItem(upgradeUiItem);
+	}
+
+	function processAbilityLevel(heroParams, abilityParams, level: Int) {
+		if(TDEF) heroParams = THeroParams;
+		if(TDEF) abilityParams = THeroAbilityParams;
+
+		var config = heroAbilityParamsGetConfig(abilityParams.common, level);
+		var index = heroParams.abilities.indexOf(abilityParams);
+
+		var passiveText = abilityParams.common.passive ? ' passive' : '';
+		var desc = txtBr(heroParams.unitKind) + passiveText + ' ability ' + abilityParams.common.name + ' (lvl ' + level + ')\n' + config.description;
+		if (config.cooldown != null) {
+			desc += ' Cooldown ' + config.cooldown + ' sec.';
+		}
+		if (config.duration != null) {
+			desc += ' Duration ' + config.duration + ' sec.';
+		}
+
+		var uiItem = TUIItem;
+		uiItem = {
+			id: null,
+			desc: desc,
+			progress: {
+				initMax: 1,
+				initCurrent: 1,
+			},
+			button: {
+				name: abilityParams.common.name + ' (' + config.costAmount + txtBr(config.costRes) + ')',
+				action: BTN_ACTIVATE_ABILITY_BASE + index,
+			},
+			queueName: UI_QUEUE.MAIN,
+			orderName: UI_ORDER.BODY,
+			listType: null,
+			initVisible: false,
+		};
+
+		if (abilityParams.common.uiItemByLevelIndex == null) {
+			abilityParams.common.uiItemByLevelIndex = [];
+		}
+
+		abilityParams.common.uiItemByLevelIndex.push(uiItem);
+
+		@async uiAddItem(uiItem);
+	}
+
+	function handleHero(heroParams) {
+		if(TDEF) heroParams = THeroParams;
+
+		heroParams.selectUiItem = {
+			id: null,
+			desc: heroParams.description,
+			progress: null,
+			button: {
+				name: 'Select ' + txtBr(heroParams.unitKind),
+				action: heroParams.selectAction,
+			},
+			queueName: UI_QUEUE.SELECT_HERO,
+			orderName: UI_ORDER.BODY,
+			listType: UI_LIST_TYPE.ITEM,
+			initVisible: true,
+		};
+
+		@async uiAddItem(heroParams.selectUiItem);
+	}
+
+	@sync for (heroParams in heroesParams) {
+		@async handleHero(heroParams);
+
+		@sync for (abilityParams in heroParams.abilities) {
+			@async processAbility(heroParams, abilityParams);
+
+			@sync for (levelIndex in 0...MAX_ABILITY_LEVEL) {
+				@async processAbilityLevel(heroParams, abilityParams, levelIndex + 1);
+			}
 		}
 	}
 }
@@ -1436,19 +2026,121 @@ function _netSelectHero(plr: Player, heroId: String) {
 
 // #region Heroes
 
-// var HeroBerserker = THeroParams;
-// HeroBerserker = {
-// 	id: 'Berserker',
-// 	unitKind: Unit.Berserker,
-// 	description: ""
-// };
-// HEROES_PARAMS.push(HeroBerserker);
+function _heroBerserkerAbilityWolfsConfig(level: Int) {
+	return {
+		wolfsCount: intByLevel(level, [2, 3, 4, 5]),
+	}
+}
+var HeroBerserkerAbilityWolfs = THeroAbilityParams;
+HeroBerserkerAbilityWolfs = {
+	common: {
+		name: 'Wolfs master',
+		passive: false,
+		sound: {
+			uiSfx: null,
+			unitSfx: UnitSoundWolf,
+			volume: 10,
+		},
+		configByLevel: function _(level: Int) {
+			var config = _heroBerserkerAbilityWolfsConfig(level);
+			return {
+				costRes: Resource.Food,
+				costAmount: intByLevel(level, [20, 25, 30, 35]),
+				cooldown: 30,
+				duration: null,
+				description: 'Create ' + config.wolfsCount + ' white wolfs.',
+			};
+		},
+		uiItemByLevelIndex: null,
+		uiUpgradeItem: null,
+	},
+	create: function _(hero, params) {
+		var wolfs = TDEF? [TUnit] : [];
+
+		return {
+			activate: function activate(level: Int, duration: Float) {
+				var config = _heroBerserkerAbilityWolfsConfig(level);
+
+				for (unit in wolfs) {
+					unit.owner = null;
+					unit.remove();
+				}
+
+				if (hero.unit != null && hero.unit.zone != null) {
+					wolfs = hero.unit.zone.addUnit(Unit.WhiteWolf, config.wolfsCount, me(), true, null, 10);
+
+					for (unit in wolfs) {
+						unit.owner = hero.player;
+					}
+				}
+			},
+			upgrade: null,
+		}
+	}
+}
+
+var HeroBerserker = THeroParams;
+HeroBerserker = {
+	id: 'Berserker',
+	unitKind: Unit.Berserker,
+	description: "Berserker",
+
+	abilities: [HeroBerserkerAbilityWolfs],
+
+	init: null,
+
+	selectAction: 'btnSelectHeroBerserker',
+
+	selectUiItem: null,
+};
+HEROES_PARAMS.push(HeroBerserker);
+function btnSelectHeroBerserker() {
+	netSelectHero(me(), HeroBerserker);
+}
+
+var HeroTestBerserker = THeroParams;
+HeroTestBerserker = {
+	id: 'Berserker2',
+	unitKind: Unit.Berserker03,
+	description: "Berserker 2",
+
+	abilities: [HeroBerserkerAbilityWolfs],
+
+	init: null,
+
+	selectAction: 'btnSelectHeroTestBerserker',
+
+	selectUiItem: null,
+};
+HEROES_PARAMS.push(HeroTestBerserker);
+function btnSelectHeroTestBerserker() {
+	netSelectHero(me(), HeroTestBerserker);
+}
 
 // #endregion
 
 // #region Main
 
 function main() {
+	// test
+
+	for (plr in USER_PLAYERS) {
+		@async plr.addResource(Resource.Stone, 10);
+	}
+
+	@async uiAddItem({
+		id: null,
+		desc: 'Go to smith',
+		progress: null,
+		button: {
+			name: 'Upgrade abilities',
+			action: BTN_GO_TO_UPGRADE_ABILITIES,
+		},
+		queueName: UI_QUEUE.MAIN,
+		orderName: UI_ORDER.FOOTER,
+		listType: null,
+		initVisible: true,
+	});
 }
 
 
@@ -1457,6 +2149,8 @@ function main() {
 // #region Dialogs
 
 function dialogIntro() {
+	wait(0.5);
+
 	setCamera(ZONES.INIT);
 	setZoom(1);
 
@@ -1464,14 +2158,13 @@ function dialogIntro() {
 
 	var unit: Unit;
 	if (isHost()) {
-		var unit = ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 1, FOE_PLAYER).pop();
+		var unit = spawnUnit(ZONES.INIT, FOE_PLAYER, Unit.UndeadGiantDragon, ZONES.INIT.x, ZONES.INIT.y, ZONES.INIT.x + 1, ZONES.INIT.y + 1);
+		// var unit = ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 1, FOE_PLAYER).pop();
 
-		@split[
-			unit.hideWeapons(),
-			unit.orientToPos(unit.x + 1, unit.y + 1),
-			effectExplosion(ZONES.INIT, unit),
-			playAnim(unit, 'victory', false, true),
-		];
+		// @async unit.hideWeapons();
+		// @async unit.orientToPos(unit.x + 1, unit.y + 1);
+		@async effectExplosion(ZONES.INIT, unit);
+		@async playAnim(unit, 'victory', false, true);
 	}
 
 	var options: DialogOptions = {
@@ -1508,7 +2201,7 @@ function dialogIntro() {
 	}
 
 	// test
-	ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 5, FOE_PLAYER);
+	// ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 5, FOE_PLAYER);
 }
 
 // #endregion
@@ -1520,7 +2213,10 @@ function init() {
 
 	if (state.time == 0) {
 		if (isHost()) {
+			@async setupHeroesUi(HEROES_PARAMS);
+			@async setupHubUi();
 			@async main();
+			@async uiApplyOrderItems(UI_QUEUE.SELECT_HERO);
 		}
 	}
 
@@ -1567,6 +2263,7 @@ function setupGlobal() {
 
 		@async plr.unlockTech(Tech.BearAwake, true);
 		@async plr.addBonus({id: ConquestBonus.BResBonus, resId: Resource.Food, isAdvanced: false });
+		@async plr.addBonus({id: ConquestBonus.BPopulation, isAdvanced: false});
 		@async plr.setResource(Resource.Gemstone, CONFIG.START_LIVES);
 	}
 }
@@ -1576,7 +2273,7 @@ function setupGlobal() {
 // Regular update is called every 0.5s
 function regularUpdate(elapsed : Float) {
 	if (isHost()) {
-		emitEvent(gameEvents, GlobalEventUpdateData({elapsed: elapsed}));
+		@async emitEvent(gameEvents, GlobalEventUpdateData({elapsed: elapsed}));
 	}
 }
 
