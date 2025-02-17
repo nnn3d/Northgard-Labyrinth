@@ -124,6 +124,25 @@
 		}
 	},
 	"unit": {
+		"Wolf": {
+			"phases": {
+				"0": {
+					"lootTable": {
+						"1": {
+							"qty": 10,
+							"res": "Money",
+							"reqTech": "Pillage"
+						},
+						"2": {
+							"res": "Food"
+						}
+					}
+				}
+			},
+			"props": {
+				"canBefriend": null
+			}
+		},
 		"WhiteWolf": {
 			"flags": 69
 		}
@@ -969,6 +988,12 @@
 					"val": 0.05
 				},
 				"3": {
+					"val": 0
+				},
+				"5": {
+					"val": 0
+				},
+				"6": {
 					"val": 0
 				}
 			}

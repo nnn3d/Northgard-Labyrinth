@@ -47,10 +47,13 @@ function logColor(value: Dynamic, color: Int) {
 function txtBr(value: Dynamic) {
 	return '[' + value + ']';
 }
-
 function txtBold(value: Dynamic) {
 	return '<b>' + value + '</b>';
 }
+function txtFont(font: FontKind, value: Dynamic) {
+	return "<font face='" + font + "'>" + value + "</font>";
+}
+
 
 function arrayFindIndex(array: Dynamic, callback): Int {
 	if(TDEF) callback = function type(item: Dynamic, index: Int, array: Array<Dynamic>): Bool {};
@@ -521,6 +524,9 @@ function _uiUpdateActiveQueueList(plr: Player) {
 		return;
 	}
 	var queue = _uiGetQueue(plr, activeQueueName);
+	if (queue == null) {
+		return;
+	}
 	var counter = 0;
 
 	_uiNormalizePageOffset(queue);
@@ -758,17 +764,6 @@ var _uiOrderMap = TDEF? TUIOrderMap : makeStringMap();
 function _uiInitItem(plr: Player, item) {
 	if (TDEF) item = TUIItem;
 
-	var order = _uiOrderMap.get(item.orderName.order);
-	if (order == null) {
-		order = {
-			value: item.orderName.value,
-			items: [],
-		};
-		_uiOrderMap.set(item.orderName.order, order);
-	}
-	order.items.push(item);
-
-
 	var queue = _uiGetQueue(plr, item.queueName);
 	queue.all.set(item.id, item);
 
@@ -797,6 +792,16 @@ function uiAddItem(item) {
 		item.id = uiGetId();
 	}
 
+	var order = _uiOrderMap.get(item.orderName.order);
+	if (order == null) {
+		order = {
+			value: item.orderName.value,
+			items: [],
+		};
+		_uiOrderMap.set(item.orderName.order, order);
+	}
+	order.items.push(item);
+
 	@sync for (plr in state.players) {
 		if (plr.isAI) {
 			continue;
@@ -811,10 +816,7 @@ function uiAddItem(item) {
 function uiApplyOrderItems(activeQueueName) {
 	if (TDEF) activeQueueName = TUIQueueNameEnum;
 
-	var orders = TDEF? [TUIOrder] : [];
-	for (order in _uiOrderMap) {
-		orders.insert(order.value, order);
-	}
+	var orders = [for (order in _uiOrderMap) order];
 	arraySort(orders, function _(a, b): Int {
 		var ta = TDEF? TUIOrder : a;
 		var tb = TDEF? TUIOrder : b;
@@ -822,38 +824,42 @@ function uiApplyOrderItems(activeQueueName) {
 		return ta.value - tb.value;
 	});
 
-	@sync {
-		for (plr in state.players) {
-			if (plr.isAI) {
-				continue;
-			}
+	function handleItem(plr: Player, item) {
+		if(TDEF) item = TUIItem;
 
-			for (order in orders) {
-				for (item in order.items) {
-					var visible = (
-						item.initVisible &&
-						item.queueName.queue == activeQueueName.queue &&
-						item.listType == null
-					);
+		var visible = (
+			item.initVisible &&
+			item.queueName.queue == activeQueueName.queue &&
+			item.listType == null
+		);
 
 
-					@async plr.objectives.add(
-						item.id,
-						item.desc,
-						{
-							visible: visible,
-							val: item.progress != null ? item.progress.initCurrent : null,
-							goalVal: item.progress != null ? item.progress.initMax : null,
-							showProgressBar: item.progress != null,
-							showOtherPlayers: false,
-						},
-						item.button
-					);
-					// for some reason "val" in add() fn doesn't work
-					if (item.progress != null && item.progress.initCurrent != null) {
-						@async plr.objectives.setCurrentVal(item.id, item.progress.initCurrent);
-					}
-				}
+		@async plr.objectives.add(
+			item.id,
+			item.desc,
+			{
+				visible: visible,
+				val: item.progress != null ? item.progress.initCurrent : null,
+				goalVal: item.progress != null ? item.progress.initMax : null,
+				showProgressBar: item.progress != null,
+				showOtherPlayers: false,
+			},
+			item.button
+		);
+		// for some reason "val" in add() fn doesn't work
+		if (item.progress != null && item.progress.initCurrent != null) {
+			@async plr.objectives.setCurrentVal(item.id, item.progress.initCurrent);
+		}
+	}
+
+	@sync for (plr in state.players) {
+		if (plr.isAI) {
+			continue;
+		}
+
+		@sync for (order in orders) {
+			@sync for (item in order.items) {
+				@async handleItem(plr, item);
 			}
 		}
 	}
@@ -865,7 +871,6 @@ function uiApplyOrderItems(activeQueueName) {
 	@sync for (plr in state.players) {
 		if (!plr.isAI) {
 			@async _uiUpdateActiveQueueList(plr);
-
 			@async _uiApplyRender(plr);
 		}
 	}
@@ -902,7 +907,13 @@ function netGenericNotify(plr: Player, text: String, target: Entity) {
 function netGenericNotifyAll(text: String, target: Entity) {
 	invokeAll('_netGenericNotify', _netArgs2(text, target));
 }
+var _netGenericNotifyLast = 0.;
+var _netGenericNotifyEvery = 5;
 function _netGenericNotify(text: String, target: Entity) {
+	if (_netGenericNotifyLast + _netGenericNotifyEvery < state.time) {
+		_netGenericNotifyLast = state.time;
+		me().genericNotify('');
+	}
 	me().genericNotify(text, target);
 }
 
@@ -1103,12 +1114,7 @@ function setupGlobalVars() {
 		if (!plr.isAI) {
 			USER_PLAYERS.push(plr);
 		}
-		if (plr.isAI && plr.isPlayer() && !plr.team.asPlayer().isAI) {
-			ALLY_PLAYER = plr;
-		}
-		if (plr.isAI && plr.isPlayer() && plr.team.asPlayer().isAI) {
-			FOE_PLAYER = plr;
-		}
+
 		for (zone in plr.zones) {
 			for (building in zone.buildings) {
 				var name = building.kind + '';
@@ -1118,6 +1124,9 @@ function setupGlobalVars() {
 			}
 		}
 	}
+
+	ALLY_PLAYER = getPlayer('Ally');
+	FOE_PLAYER = getPlayer('Foe');
 
 	DIFFICULTY_MOD = CONFIG.DIFFICULTY_MAP[USER_PLAYERS.length - 1];
 }
@@ -1192,7 +1201,7 @@ var THeroAbilityConfig = TDEF? {
 	costAmount: TInt,
 	cooldown: TFloat,
 	duration: TFloat,
-	description: TString,
+	description: [TString],
 } :null;
 
 function FnHeroAbilityConfigByLevel(level: Int) { return THeroAbilityConfig; }
@@ -1519,8 +1528,16 @@ function _heroRevive(hero) {
 		return;
 	}
 
+	var diedHero = hero.unit;
+
 	hero.unit = hero.lastZone.addUnit(hero.params.unitKind, 1, hero.player, true)[0];
 	hero.isAlive = true;
+
+	if (diedHero != null && diedHero.x != null) {
+		hero.unit.x = diedHero.x;
+		hero.unit.y = diedHero.y;
+		hero.unit.rotation = diedHero.rotation;
+	}
 
 	@async netMoveCamera(hero.player, {x: hero.unit.x, y: hero.unit.y}, null);
 
@@ -1543,7 +1560,8 @@ function _heroDie(hero) {
 	var zone = hero.lastZone;
 	var canRevive = hero.player.getResource(Resource.Gemstone) > 0;
 
-	hero.unit = null;
+	debug(hero.unit.x + '');
+
 	hero.isAlive = false;
 
 	for (plr in USER_PLAYERS) {
@@ -1562,7 +1580,8 @@ function _heroDie(hero) {
 	}
 
 	// cleanup auto revive from rule WarchiefElimination
-	var autoreviveUnit = getPlayerMainZone(hero.player).getUnit(hero.params.unitKind);
+	var mainZone = getPlayerMainZone(hero.player);
+	var autoreviveUnit = mainZone.getUnit(hero.params.unitKind);
 	if (autoreviveUnit != null) {
 		autoreviveUnit.remove();
 	}
@@ -1572,7 +1591,9 @@ function _heroDie(hero) {
 	@async emitEvent(gameEvents, eventData);
 
 	if (canRevive) {
+		debug('1');
 		wait(CONFIG.HERO_REVIVE_COOLDOWN_SEC);
+		debug('2');
 		_heroRevive(hero);
 	}
 }
@@ -1642,12 +1663,16 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 		@async FnHeroParamsInit(hero);
 	}
 
+
+	// clean fame from zones
+	@async plr.setResource(Resource.Fame, 0);
+
 	onUpdate(function _(elapsed, stop) {
 		if (hero.unit != null && hero.unit.zone != null) {
 			var prevZone = hero.lastZone;
 			hero.lastZone = hero.unit.zone;
 
-			if (prevZone != null) {
+			if (prevZone != null && prevZone != hero.unit.zone) {
 				var eventData = HeroEventZoneChangeData({hero: hero, prevZone: prevZone});
 				@async emitEvent(hero.events, eventData);
 				@async emitEvent(gameEvents, eventData);
@@ -1870,7 +1895,7 @@ function setupHeroesUi(heroesParams) {
 	// select hero
 	@async uiAddItem({
 		id: null,
-		desc: 'SELECT YOUR HERO\n',
+		desc: txtFont(FontKind.BigTitle, 'Select your Hero'),
 		progress: null,
 		button: null,
 		queueName: UI_QUEUE.SELECT_HERO,
@@ -1899,7 +1924,7 @@ function setupHeroesUi(heroesParams) {
 	// upgrade abilities
 	@async uiAddItem({
 		id: null,
-		desc: 'UPGRADE ABILITY',
+		desc: txtFont(FontKind.Title, 'Upgrade abilities'),
 		progress: null,
 		button: null,
 		queueName: UI_QUEUE.UPGRADE_ABILITIES,
@@ -1922,6 +1947,10 @@ function setupHeroesUi(heroesParams) {
 		initVisible: true,
 	});
 
+	function isArray(value: Dynamic) {
+		return value.copy != null;
+	}
+
 	function processAbility(heroParams, abilityParams) {
 		if(TDEF) heroParams = THeroParams;
 		if(TDEF) abilityParams = THeroAbilityParams;
@@ -1930,21 +1959,54 @@ function setupHeroesUi(heroesParams) {
 		var index = heroParams.abilities.indexOf(abilityParams);
 
 		var passiveText = abilityParams.common.passive ? ' passive' : '';
-		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability ' + ' by level:';
+
+		var levelDescs: Array<Array<String>> = [];
+
 
 		for (levelIndex in 0...MAX_ABILITY_LEVEL) {
 			var level = levelIndex + 1;
 
 			var config = heroAbilityParamsGetConfig(abilityParams.common, level);
 
-			desc = desc + '\n' + txtBold('Level ' + level) + ': ' + config.description;
+			var fullDesc = config.description;
+
 			if (config.cooldown != null) {
-				desc += ' Cooldown ' + config.cooldown + ' sec.';
+				fullDesc = fullDesc.concat(['\nCooldown', descArg(config.cooldown), 'sec.']);
 			}
 			if (config.duration != null) {
-				desc += ' Duration ' + config.duration + ' sec.';
+				fullDesc = fullDesc.concat(['\nDuration', descArg(config.duration), 'sec.']);
 			}
-			desc += ' Costs ' + config.costAmount + ' ' + txtBr(config.costRes) + '.';
+			fullDesc = fullDesc.concat(['\nCosts', descArg(config.costAmount), txtBr(config.costRes)]);
+
+			levelDescs.push(fullDesc);
+		}
+
+		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability\n';
+
+		function isEq(item1: Dynamic, item2: Dynamic) {
+			var arr1: Array<String> = item1;
+			var arr2: Array<String> = item2;
+			return arr1[0] == arr2[0];
+		}
+		function isEqualItems(index: Int) {
+			for (itemIndex in 0...levelDescs.length - 1) {
+				if (!isEq(levelDescs[itemIndex][index], levelDescs[itemIndex + 1][index])) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		function handleItem(index:Int) {
+			if (isArray(levelDescs[0][index]) && !isEqualItems(index)) {
+				desc += [for (itemIndex in 0...levelDescs.length) levelDescs[itemIndex][index]].join(' / ') + ' ';
+			} else {
+				desc += levelDescs[0][index] + ' ';
+			}
+		}
+
+		@sync for (index in 0...levelDescs[0].length) {
+			@async handleItem(index);
 		}
 
 		var upgradeUiItem = TUIItem;
@@ -1978,7 +2040,7 @@ function setupHeroesUi(heroesParams) {
 		var index = heroParams.abilities.indexOf(abilityParams);
 
 		var passiveText = abilityParams.common.passive ? ' passive' : '';
-		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability ' + ' lvl ' + txtBold(level) + '\n' + config.description;
+		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability ' + ' (lvl ' + txtBold(level) + ')\n' + config.description.join(' ');
 		if (config.cooldown != null) {
 			desc += ' Cooldown ' + config.cooldown + ' sec.';
 		}
@@ -2070,6 +2132,10 @@ function utilPlayerBuild(plr: Player, kind: BuildingKind): Building {
 	}
 }
 
+function descArg(value: Dynamic): Dynamic {
+	return [value + ''];
+}
+
 // heroes
 
 function _heroBerserkerAbilityWolfsConfig(level: Int) {
@@ -2094,7 +2160,7 @@ HeroBerserkerAbilityWolfs = {
 				costAmount: intByLevel(level, [20, 25, 30, 35]),
 				cooldown: 30,
 				duration: null,
-				description: 'Create ' + config.wolfsCount + ' white wolfs.',
+				description: ['Create', descArg(config.wolfsCount), txtBr(Unit.WhiteWolf) + '.'],
 			};
 		},
 		uiItemByLevelIndex: null,
@@ -2105,7 +2171,6 @@ HeroBerserkerAbilityWolfs = {
 
 		return {
 			activate: function activate(level: Int, duration: Float) {
-				debug('activate');
 				var config = _heroBerserkerAbilityWolfsConfig(level);
 
 				for (unit in wolfs) {
@@ -2181,7 +2246,7 @@ function testMain() {
 		var mainZone = getPlayerMainZone(plr);
 
 		for (zone in ZONES.INIT.next) {
-			zone.addUnit(Unit.Wolf, 3);
+			var wolfs = zone.addUnit(Unit.Wolf, 5, FOE_PLAYER);
 
 			me().discoverZone(zone);
 		}
@@ -2304,7 +2369,6 @@ function setupGlobal() {
 	addRule(Rule.NoWarbandCap);
 	addRule(Rule.NoBurnBuilding);
 	addRule(Rule.RimesteelReplaceIron);
-
 
 	@sync for (plr in USER_PLAYERS) {
 		for (plrZone in state.players) {
