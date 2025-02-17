@@ -48,6 +48,10 @@ function txtBr(value: Dynamic) {
 	return '[' + value + ']';
 }
 
+function txtBold(value: Dynamic) {
+	return '<b>' + value + '</b>';
+}
+
 function arrayFindIndex(array: Dynamic, callback): Int {
 	if(TDEF) callback = function type(item: Dynamic, index: Int, array: Array<Dynamic>): Bool {};
 
@@ -955,30 +959,42 @@ function _netUiBack(plr: Player) {
 // #region Effects And Sounds
 
 function effectExplosion(zone: Zone, entity: Entity) {
-	wait(0.01);
+	wait(0);
 	var building = zone.createBuilding(Building.MagmaFlow, false, {pos: entity});
-	wait(0.01);
+	wait(0);
 	building.destroy();
 }
 
-var TUnitSound = TDEF? {
+var TEntitySound = TDEF? {
 	unit: TUnitKind,
+	building: TBuildingKind,
 	sfx: TString,
 } :null;
-function playUnitSound(sound, zone: Zone, entity: Entity) {
-	if(TDEF) sound = TUnitSound;
+function playUnitSound(sound, zone: Zone, posEntity: Entity) {
+	if(TDEF) sound = TEntitySound;
 
-	if (entity == null) entity = zone;
-	var unit = spawnUnit(zone, null, sound.unit, entity.x, entity.y);
+	if (posEntity == null) {
+		posEntity = zone;
+	}
 
-	unit.sfx(sound.sfx);
-	wait(0.01);
-	unit.remove();
+	wait(0);
+	var soundEntity: Entity;
+	if (sound.unit != null) {
+		soundEntity = spawnUnit(zone, null, sound.unit, posEntity.x, posEntity.y);
+	} else if (sound.building != null) {
+		soundEntity = zone.createBuilding(sound.building, false, { pos: posEntity, creator: me() });
+	}
+
+	if (soundEntity != null) {
+		soundEntity.sfx(sound.sfx);
+		wait(0);
+		soundEntity.remove();
+	}
 }
 
 var TGlobalSound = TDEF? {
 	uiSfx: TUiSfxKind,
-	unitSfx: TUnitSound,
+	unitSfx: TEntitySound,
 	volume: TFloat,
 } :null;
 function playGlobalSound(sound, zone: Zone, entity: Entity) {
@@ -991,10 +1007,11 @@ function playGlobalSound(sound, zone: Zone, entity: Entity) {
 	}
 }
 
-var UnitSoundWolf = TUnitSound;
-UnitSoundWolf = {
-	unit: Unit.Wolf,
-	sfx: 'bite',
+var EntitySoundWolfSpawn = TEntitySound;
+EntitySoundWolfSpawn = {
+	unit: null,
+	building: Building.BrawlerCamp,
+	sfx: 'spawn_wolf',
 };
 
 // #endregion
@@ -1744,6 +1761,7 @@ function _netUpgradeAbility(plr: Player, abilityIndex: Int) {
 
 function netSelectHero(plr: Player, hero) {
 	if(TDEF) hero = THeroParams;
+	sfx(UiSfx.HireHero, 10);
 
 	invokeHost('_netSelectHero', _netArgs2(plr, hero.id));
 }
@@ -1906,21 +1924,21 @@ function setupHeroesUi(heroesParams) {
 		var index = heroParams.abilities.indexOf(abilityParams);
 
 		var passiveText = abilityParams.common.passive ? ' passive' : '';
-		var desc = txtBr(heroParams.unitKind) + passiveText + ' ability ' + abilityParams.common.name + ' by level:';
+		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability ' + ' by level:';
 
 		for (levelIndex in 0...MAX_ABILITY_LEVEL) {
 			var level = levelIndex + 1;
 
 			var config = heroAbilityParamsGetConfig(abilityParams.common, level);
 
-			desc = desc + '\n Level ' + level + ': ' + config.description;
+			desc = desc + '\n' + txtBold('Level ' + level) + ': ' + config.description;
 			if (config.cooldown != null) {
 				desc += ' Cooldown ' + config.cooldown + ' sec.';
 			}
 			if (config.duration != null) {
 				desc += ' Duration ' + config.duration + ' sec.';
 			}
-			desc += ' Costs ' + config.costAmount + txtBr(config.costRes) + '.';
+			desc += ' Costs ' + config.costAmount + ' ' + txtBr(config.costRes) + '.';
 		}
 
 		var upgradeUiItem = TUIItem;
@@ -1932,7 +1950,7 @@ function setupHeroesUi(heroesParams) {
 				initCurrent: 1,
 			},
 			button: {
-				name: 'Upgrade ' + ' ' + CONFIG.ABILITY_UPGRADE_COST + txtBr(CONFIG.ABILITY_UPGRADE_RES),
+				name: 'Upgrade in ' + CONFIG.ABILITY_UPGRADE_COST + txtBr(CONFIG.ABILITY_UPGRADE_RES),
 				action: BTN_UPGRADE_ABILITY_BASE + index,
 			},
 			queueName: UI_QUEUE.UPGRADE_ABILITIES,
@@ -1954,7 +1972,7 @@ function setupHeroesUi(heroesParams) {
 		var index = heroParams.abilities.indexOf(abilityParams);
 
 		var passiveText = abilityParams.common.passive ? ' passive' : '';
-		var desc = txtBr(heroParams.unitKind) + passiveText + ' ability ' + abilityParams.common.name + ' (lvl ' + level + ')\n' + config.description;
+		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability ' + ' lvl ' + txtBold(level) + '\n' + config.description;
 		if (config.cooldown != null) {
 			desc += ' Cooldown ' + config.cooldown + ' sec.';
 		}
@@ -1971,7 +1989,7 @@ function setupHeroesUi(heroesParams) {
 				initCurrent: 1,
 			},
 			button: {
-				name: abilityParams.common.name + ' (' + config.costAmount + txtBr(config.costRes) + ')',
+				name: abilityParams.common.name + ' (' + config.costAmount + ' ' + txtBr(config.costRes) + ')',
 				action: BTN_ACTIVATE_ABILITY_BASE + index,
 			},
 			queueName: UI_QUEUE.MAIN,
@@ -2024,7 +2042,17 @@ function setupHeroesUi(heroesParams) {
 
 // #endregion
 
-// #region Heroes
+// #region Heroes and abilities
+
+// utils
+function utilMoveUnits(units: Array<Unit>, target: Entity, maxDistance: Float) {
+	for (unit in units) {
+		unit.setPosition(target.x + math.random(maxDistance), target.y + math.random(maxDistance));
+		unit.rotation = target.rotation;
+	}
+}
+
+// heroes
 
 function _heroBerserkerAbilityWolfsConfig(level: Int) {
 	return {
@@ -2038,8 +2066,8 @@ HeroBerserkerAbilityWolfs = {
 		passive: false,
 		sound: {
 			uiSfx: null,
-			unitSfx: UnitSoundWolf,
-			volume: 10,
+			unitSfx: EntitySoundWolfSpawn,
+			volume: 20,
 		},
 		configByLevel: function _(level: Int) {
 			var config = _heroBerserkerAbilityWolfsConfig(level);
@@ -2067,11 +2095,14 @@ HeroBerserkerAbilityWolfs = {
 				}
 
 				if (hero.unit != null && hero.unit.zone != null) {
-					wolfs = hero.unit.zone.addUnit(Unit.WhiteWolf, config.wolfsCount, me(), true, null, 10);
+					wolfs = hero.unit.zone.addUnit(Unit.WhiteWolf, config.wolfsCount, me(), false);
+
 
 					for (unit in wolfs) {
 						unit.owner = hero.player;
 					}
+
+					@async utilMoveUnits(wolfs, hero.unit, 5);
 				}
 			},
 			upgrade: null,
@@ -2122,7 +2153,9 @@ function btnSelectHeroTestBerserker() {
 // #region Main
 
 function main() {
-	// test
+}
+
+function testMain() {
 
 	for (plr in USER_PLAYERS) {
 		@async plr.addResource(Resource.Stone, 10);
@@ -2141,6 +2174,19 @@ function main() {
 		listType: null,
 		initVisible: true,
 	});
+
+	var mainZone = getPlayerMainZone(me());
+	var relic = mainZone.createBuilding(Building.RelicBear, false, {creator: me()});
+	var relic2 = mainZone.createBuilding(Building.RelicBoar, false, {creator: me()});
+
+	me().discoverZone(mainZone);
+
+	for (zone in ZONES.INIT.next) {
+		zone.addUnit(Unit.Wolf, 3);
+
+		me().discoverZone(zone);
+	}
+
 }
 
 
@@ -2159,10 +2205,7 @@ function dialogIntro() {
 	var unit: Unit;
 	if (isHost()) {
 		var unit = spawnUnit(ZONES.INIT, FOE_PLAYER, Unit.UndeadGiantDragon, ZONES.INIT.x, ZONES.INIT.y, ZONES.INIT.x + 1, ZONES.INIT.y + 1);
-		// var unit = ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 1, FOE_PLAYER).pop();
 
-		// @async unit.hideWeapons();
-		// @async unit.orientToPos(unit.x + 1, unit.y + 1);
 		@async effectExplosion(ZONES.INIT, unit);
 		@async playAnim(unit, 'victory', false, true);
 	}
@@ -2172,7 +2215,7 @@ function dialogIntro() {
 		font: FontKind.BigTitle,
 	};
 
-	sfx(UiSfx.NewFameTitle);
+	sfx(UiSfx.Horn);
 
 	talk(
 		'Welcome to the Northgard Labyrinth!',
@@ -2216,12 +2259,11 @@ function init() {
 			@async setupHeroesUi(HEROES_PARAMS);
 			@async setupHubUi();
 			@async main();
+			@async setupGlobal();
+			@async testMain();
 			@async uiApplyOrderItems(UI_QUEUE.SELECT_HERO);
 		}
-	}
 
-	@async setupGlobal();
-	if (state.time == 0) {
 		@async dialogIntro();
 	}
 }
@@ -2261,7 +2303,10 @@ function setupGlobal() {
 			}
 		}
 
+		plr.clan = Clan.Bear;
+
 		@async plr.unlockTech(Tech.BearAwake, true);
+		@async plr.unlockTech(Tech.Pillage, true);
 		@async plr.addBonus({id: ConquestBonus.BResBonus, resId: Resource.Food, isAdvanced: false });
 		@async plr.addBonus({id: ConquestBonus.BPopulation, isAdvanced: false});
 		@async plr.setResource(Resource.Gemstone, CONFIG.START_LIVES);
