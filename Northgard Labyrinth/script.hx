@@ -1109,12 +1109,18 @@ function setupGlobalVars() {
 		if (plr.isAI && plr.isPlayer() && plr.team.asPlayer().isAI) {
 			FOE_PLAYER = plr;
 		}
-		PLAYER_MAIN_ZONE_MAP.set(plr.name, player.zones.copy()[0]);
+		for (zone in plr.zones) {
+			for (building in zone.buildings) {
+				var name = building.kind + '';
+				if (name.indexOf('TownHall') > -1) {
+					PLAYER_MAIN_ZONE_MAP.set(plr.name, zone);
+				}
+			}
+		}
 	}
 
 	DIFFICULTY_MOD = CONFIG.DIFFICULTY_MAP[USER_PLAYERS.length - 1];
 }
-
 
 // Global events
 
@@ -2047,8 +2053,20 @@ function setupHeroesUi(heroesParams) {
 // utils
 function utilMoveUnits(units: Array<Unit>, target: Entity, maxDistance: Float) {
 	for (unit in units) {
-		unit.setPosition(target.x + math.random(maxDistance), target.y + math.random(maxDistance));
+		var x = target.x + math.random(maxDistance) - (maxDistance / 2);
+		var y = target.y + math.random(maxDistance) - (maxDistance / 2);
+		unit.setPosition(x, y);
 		unit.rotation = target.rotation;
+	}
+}
+
+function utilPlayerBuild(plr: Player, kind: BuildingKind): Building {
+	var building: Building;
+	for (zone in plr.zones) {
+		building = zone.createBuilding(kind, false, {creator: plr});
+		if (building != null) {
+			return building;
+		}
 	}
 }
 
@@ -2087,6 +2105,7 @@ HeroBerserkerAbilityWolfs = {
 
 		return {
 			activate: function activate(level: Int, duration: Float) {
+				debug('activate');
 				var config = _heroBerserkerAbilityWolfsConfig(level);
 
 				for (unit in wolfs) {
@@ -2095,14 +2114,13 @@ HeroBerserkerAbilityWolfs = {
 				}
 
 				if (hero.unit != null && hero.unit.zone != null) {
-					wolfs = hero.unit.zone.addUnit(Unit.WhiteWolf, config.wolfsCount, me(), false);
+					wolfs = hero.unit.zone.addUnit(Unit.WhiteWolf, config.wolfsCount, hero.player, false);
 
+					utilMoveUnits(wolfs, hero.unit, 5);
 
 					for (unit in wolfs) {
 						unit.owner = hero.player;
 					}
-
-					@async utilMoveUnits(wolfs, hero.unit, 5);
 				}
 			},
 			upgrade: null,
@@ -2114,7 +2132,7 @@ var HeroBerserker = THeroParams;
 HeroBerserker = {
 	id: 'Berserker',
 	unitKind: Unit.Berserker,
-	description: "Berserker",
+	description: "[Berserker]",
 
 	abilities: [HeroBerserkerAbilityWolfs],
 
@@ -2129,23 +2147,23 @@ function btnSelectHeroBerserker() {
 	netSelectHero(me(), HeroBerserker);
 }
 
-var HeroTestBerserker = THeroParams;
-HeroTestBerserker = {
+var HeroMaiden = THeroParams;
+HeroMaiden = {
 	id: 'Berserker2',
-	unitKind: Unit.Berserker03,
-	description: "Berserker 2",
+	unitKind: Unit.Maiden,
+	description: "[Maiden]",
 
 	abilities: [HeroBerserkerAbilityWolfs],
 
 	init: null,
 
-	selectAction: 'btnSelectHeroTestBerserker',
+	selectAction: 'btnSelectHeroMaiden',
 
 	selectUiItem: null,
 };
-HEROES_PARAMS.push(HeroTestBerserker);
-function btnSelectHeroTestBerserker() {
-	netSelectHero(me(), HeroTestBerserker);
+HEROES_PARAMS.push(HeroMaiden);
+function btnSelectHeroMaiden() {
+	netSelectHero(me(), HeroMaiden);
 }
 
 // #endregion
@@ -2159,6 +2177,14 @@ function testMain() {
 
 	for (plr in USER_PLAYERS) {
 		@async plr.addResource(Resource.Stone, 10);
+
+		var mainZone = getPlayerMainZone(plr);
+
+		for (zone in ZONES.INIT.next) {
+			zone.addUnit(Unit.Wolf, 3);
+
+			me().discoverZone(zone);
+		}
 	}
 
 	@async uiAddItem({
@@ -2174,19 +2200,6 @@ function testMain() {
 		listType: null,
 		initVisible: true,
 	});
-
-	var mainZone = getPlayerMainZone(me());
-	var relic = mainZone.createBuilding(Building.RelicBear, false, {creator: me()});
-	var relic2 = mainZone.createBuilding(Building.RelicBoar, false, {creator: me()});
-
-	me().discoverZone(mainZone);
-
-	for (zone in ZONES.INIT.next) {
-		zone.addUnit(Unit.Wolf, 3);
-
-		me().discoverZone(zone);
-	}
-
 }
 
 
@@ -2230,7 +2243,7 @@ function dialogIntro() {
 		ZONES.INIT
 	);
 
-	shakeCamera(true);
+	shakeCamera(false);
 
 	talk(
 		'Oops, i see you coming... Try to find me!',
@@ -2242,9 +2255,6 @@ function dialogIntro() {
 		unit.remove();
 		effectExplosion(ZONES.INIT, unit);
 	}
-
-	// test
-	// ZONES.INIT.addUnit(Unit.UndeadGiantDragon, 5, FOE_PLAYER);
 }
 
 // #endregion
