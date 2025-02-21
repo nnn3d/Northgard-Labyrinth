@@ -17,10 +17,10 @@
 			"value": 100
 		},
 		"UncolonizePlayerTime": {
-			"value": 6000
+			"value": 10
 		},
 		"UncolonizeFoeTime": {
-			"value": 6000
+			"value": 10
 		},
 		"BaseAssign": {
 			"value": 0
@@ -56,6 +56,36 @@
 				1,
 				2
 			]
+		},
+		"FTerritory": {
+			"value": 0
+		},
+		"FSmallBuildingUpgrade": {
+			"value": 0
+		},
+		"FRegularBuildingUpgrade": {
+			"value": 0
+		},
+		"FKillFaction": {
+			"value": 0
+		},
+		"FDiscoverBuilding": {
+			"value": 0
+		},
+		"FTechUnlocked": {
+			"value": 0
+		},
+		"FFeast": {
+			"value": 0
+		},
+		"FMarchfield": {
+			"value": 0
+		},
+		"FUncolonizePlayer": {
+			"value": 0
+		},
+		"FSvarnRequest": {
+			"value": 0
 		}
 	},
 	"tech": {
@@ -83,6 +113,16 @@
 			"values": {
 				"0": {
 					"val": 10
+				}
+			}
+		},
+		"PainSuppressant": {
+			"values": {
+				"0": {
+					"val": 1.5
+				},
+				"1": {
+					"val": 1.5
 				}
 			}
 		},
@@ -144,7 +184,32 @@
 			}
 		},
 		"WhiteWolf": {
+			"phases": {
+				"0": {
+					"pv": 70,
+					"atk": 14,
+					"def": 6
+				}
+			},
 			"flags": 69
+		},
+		"SacredWolf": {
+			"phases": {
+				"0": {
+					"pv": 60,
+					"atk": 12,
+					"def": 4
+				}
+			}
+		},
+		"SpectralWolf": {
+			"phases": {
+				"0": {
+					"pv": 80,
+					"atk": 16,
+					"def": 8
+				}
+			}
 		}
 	},
 	"building": {

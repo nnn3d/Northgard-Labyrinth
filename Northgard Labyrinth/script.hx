@@ -44,13 +44,13 @@ function logColor(value: Dynamic, color: Int) {
 	}
 }
 
-function txtBr(value: Dynamic) {
+function txtBr(value: Dynamic): String {
 	return '[' + value + ']';
 }
-function txtBold(value: Dynamic) {
+function txtBold(value: Dynamic): String {
 	return '<b>' + value + '</b>';
 }
-function txtFont(font: FontKind, value: Dynamic) {
+function txtFont(font: FontKind, value: Dynamic): String {
 	return "<font face='" + font + "'>" + value + "</font>";
 }
 
@@ -907,13 +907,7 @@ function netGenericNotify(plr: Player, text: String, target: Entity) {
 function netGenericNotifyAll(text: String, target: Entity) {
 	invokeAll('_netGenericNotify', _netArgs2(text, target));
 }
-var _netGenericNotifyLast = 0.;
-var _netGenericNotifyEvery = 5;
 function _netGenericNotify(text: String, target: Entity) {
-	if (_netGenericNotifyLast + _netGenericNotifyEvery < state.time) {
-		_netGenericNotifyLast = state.time;
-		me().genericNotify('');
-	}
 	me().genericNotify(text, target);
 }
 
@@ -1025,6 +1019,20 @@ EntitySoundWolfSpawn = {
 	sfx: 'spawn_wolf',
 };
 
+var EntitySoundBearStomp = TEntitySound;
+EntitySoundBearStomp = {
+	unit: Unit.Bear,
+	building: null,
+	sfx: 'stomp',
+};
+
+var EntitySoundBerserkerVictory = TEntitySound;
+EntitySoundBerserkerVictory = {
+	unit: Unit.Berserker,
+	building: null,
+	sfx: 'victory',
+};
+
 // #endregion
 
 // #region Global Constants
@@ -1083,6 +1091,7 @@ var ZONES = {
 var USER_PLAYERS: Array<Player> = [];
 var ALLY_PLAYER: Player;
 var FOE_PLAYER: Player;
+var NEUTRAL_FACTION: NeutralFaction;
 
 var PLAYER_MAIN_ZONE_MAP = makeStringMap();
 function getPlayerMainZone(plr: Player): Zone {
@@ -1189,6 +1198,7 @@ var THeroPartial = TDEF? {
 	player: TPlayer,
 	unit: TUnit,
 	events: TEventEmitter,
+	commonState: TDynamic,
 
 	isAlive: TBool,
 	lastZone: TZone,
@@ -1206,8 +1216,9 @@ var THeroAbilityConfig = TDEF? {
 
 function FnHeroAbilityConfigByLevel(level: Int) { return THeroAbilityConfig; }
 
+function FnHeroAbilityCheck(level: Int): String {}
 function FnHeroAbilityActivate(level: Int, duration: Float): Void {}
-function FnHeroAbilityUpgrade(level: Int): Void {}
+function FnHeroAbilityUpgrade(fromLevel: Int, toLevel: Int): Void {}
 
 var HERO_ABILITY_STATE = {
 	READY: 'READY',
@@ -1233,11 +1244,13 @@ var THeroAbility = TDEF? {
 	activeUntil: TFloat,
 	cooldownUntil: TFloat,
 
+	check: FnHeroAbilityCheck,
 	activate: FnHeroAbilityActivate,
 	upgrade: FnHeroAbilityUpgrade,
 } :null;
 
 var THeroAbilityCallbacks = {
+	check: FnHeroAbilityCheck,
 	activate: FnHeroAbilityActivate,
 	upgrade: FnHeroAbilityUpgrade,
 }
@@ -1261,6 +1274,11 @@ function NewHeroAbility(abilityParams, hero) {
 	FnHeroAbilityCreate = abilityParams.create;
 	var callbacks = FnHeroAbilityCreate(hero, abilityParams.common);
 
+	if (callbacks.upgrade != null && hero.level != null && hero.level != 0) {
+		FnHeroAbilityUpgrade = callbacks.upgrade;
+		@async FnHeroAbilityUpgrade(0, hero.level);
+	}
+
 	return {
 		params: abilityParams.common,
 
@@ -1269,6 +1287,7 @@ function NewHeroAbility(abilityParams, hero) {
 		activeUntil: null,
 		cooldownUntil: null,
 
+		check: callbacks.check,
 		activate: callbacks.activate,
 		upgrade: callbacks.upgrade,
 	}
@@ -1340,7 +1359,7 @@ function _heroAbilityProcessState(hero, ability, config) {
 
 	switch (ability.state) {
 		case HERO_ABILITY_STATE.ACTIVE:
-			var value = math.max(0, ability.activeUntil - state.time);
+			var value = math.max(0, state.time + config.duration - ability.activeUntil);
 			@async hero.player.objectives.setCurrentVal(uiItem.id, value);
 		case HERO_ABILITY_STATE.COOLDOWN:
 			var value = math.max(0, ability.cooldownUntil - state.time);
@@ -1402,7 +1421,7 @@ function _heroAbilityUpgrade(hero, ability) {
 
 	if (ability.upgrade != null) {
 		FnHeroAbilityUpgrade = ability.upgrade;
-		@async FnHeroAbilityUpgrade(nextLevel);
+		@async FnHeroAbilityUpgrade(prevLevel, nextLevel);
 	}
 }
 
@@ -1430,14 +1449,17 @@ var THero = TDEF? {
 	player: TPlayer,
 	unit: TUnit,
 
+	commonState: TDynamic,
+
 	abilities: [THeroAbility],
 
 	events: TEventEmitter,
 
 	// state
+	level: TInt,
 	isAlive: TBool,
 	lastZone: TZone,
-	level: TInt,
+	lastXP: TFloat,
 } :null;
 
 // Hero Events
@@ -1518,6 +1540,25 @@ function HeroEventZoneChangeData(payload) {
 	};
 }
 
+var HeroEventGetXPType = 'hero:getXP';
+var THeroEventGetXPPayload = TDEF? { hero: THero, xp: TFloat } :null;
+function HeroEventGetXPListener (callback) {
+	if(TDEF) callback = function _(payload): Void { payload = THeroEventGetXPPayload; };
+	if(TDEF) return TEventListener;
+	return {
+		type: HeroEventGetXPType,
+		callback: callback,
+	}
+}
+function HeroEventGetXPData(payload) {
+	if(TDEF) payload = THeroEventGetXPPayload;
+	if(TDEF) return TEventData;
+	return {
+		type: HeroEventGetXPType,
+		payload: payload,
+	};
+}
+
 // Hero Init
 
 
@@ -1542,7 +1583,7 @@ function _heroRevive(hero) {
 	@async netMoveCamera(hero.player, {x: hero.unit.x, y: hero.unit.y}, null);
 
 	for (plr in USER_PLAYERS) {
-		var volume = plr == hero.player ? 5 : 1;
+		var volume = plr == hero.player ? 3 : 1;
 		@async netSfx(plr, UiSfx.EndGameFameVictory, volume);
 	}
 
@@ -1560,12 +1601,10 @@ function _heroDie(hero) {
 	var zone = hero.lastZone;
 	var canRevive = hero.player.getResource(Resource.Gemstone) > 0;
 
-	debug(hero.unit.x + '');
-
 	hero.isAlive = false;
 
 	for (plr in USER_PLAYERS) {
-		var volume = plr == hero.player ? 5 : 1;
+		var volume = plr == hero.player ? 3 : 1;
 		@async netSfx(plr, UiSfx.DeathmatchHeroDies, volume);
 	}
 
@@ -1591,9 +1630,7 @@ function _heroDie(hero) {
 	@async emitEvent(gameEvents, eventData);
 
 	if (canRevive) {
-		debug('1');
 		wait(CONFIG.HERO_REVIVE_COOLDOWN_SEC);
-		debug('2');
 		_heroRevive(hero);
 	}
 }
@@ -1630,19 +1667,18 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 	var hero = THero;
 	hero = {
 		params: heroParams,
-
 		unitKind: heroParams.unitKind,
-
 		player: plr,
 		unit: unit,
 
+		commonState: {},
 		abilities: [],
-
 		events: NewEventEmitter(),
 
+		level: 1,
 		isAlive: true,
 		lastZone: unit.zone,
-		level: 1,
+		lastXP: 0,
 	}
 
 	for (abilityParams in hero.params.abilities) {
@@ -1663,9 +1699,6 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 		@async FnHeroParamsInit(hero);
 	}
 
-
-	// clean fame from zones
-	@async plr.setResource(Resource.Fame, 0);
 
 	onUpdate(function _(elapsed, stop) {
 		if (hero.unit != null && hero.unit.zone != null) {
@@ -1689,6 +1722,14 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 		) {
 			@async _heroLevelUp(hero);
 		}
+		var xp = hero.player.getResource(Resource.MilitaryXP);
+		if (xp > hero.lastXP) {
+			var eventData = HeroEventGetXPData({hero: hero, xp: xp - hero.lastXP});
+			hero.lastXP = xp;
+
+			@async emitEvent(hero.events, eventData);
+			@async emitEvent(gameEvents, eventData);
+		}
 	});
 
 	return hero;
@@ -1698,6 +1739,11 @@ function heroActivateAbility(hero, abilityIndex: Int) {
 	if(TDEF) hero = THero;
 
 	var ability = hero.abilities[abilityIndex];
+
+	if (ability.params.passive) {
+		log('Ability to activate with index ' + abilityIndex + ' for hero ' + hero.params.id + ' is passive');
+		return;
+	}
 
 	if (ability == null) {
 		log('Ability to activate with index ' + abilityIndex + ' for hero ' + hero.params.id + ' not found');
@@ -1719,6 +1765,18 @@ function heroActivateAbility(hero, abilityIndex: Int) {
 		netGenericNotify(hero.player, 'You need ' + config.costAmount + txtBr(config.costRes) + ' to activate "' + ability.params.name + '" ability!', null);
 		return;
 	}
+	if (ability.check != null) {
+		FnHeroAbilityCheck = ability.check;
+		var checkText = FnHeroAbilityCheck(hero.level);
+
+		if (checkText != null) {
+			if (checkText != '') {
+				netGenericNotify(hero.player, checkText, null);
+			}
+			return;
+		}
+	}
+
 	@async hero.player.addResource(config.costRes, config.costAmount * -1);
 
 	@async _heroAbilityActivate(hero, ability);
@@ -1839,16 +1897,16 @@ function btnActivateAbility0() {
 	netActivateAbility(me(), 0);
 }
 function btnActivateAbility1() {
-	netActivateAbility(me(), 0);
+	netActivateAbility(me(), 1);
 }
 function btnActivateAbility2() {
-	netActivateAbility(me(), 0);
+	netActivateAbility(me(), 2);
 }
 function btnActivateAbility3() {
-	netActivateAbility(me(), 0);
+	netActivateAbility(me(), 3);
 }
 function btnActivateAbility4() {
-	netActivateAbility(me(), 0);
+	netActivateAbility(me(), 4);
 }
 
 var BTN_UPGRADE_ABILITY_BASE = 'btnUpgradeAbility';
@@ -1856,16 +1914,16 @@ function btnUpgradeAbility0() {
 	netUpgradeAbility(me(), 0);
 }
 function btnUpgradeAbility1() {
-	netUpgradeAbility(me(), 0);
+	netUpgradeAbility(me(), 1);
 }
 function btnUpgradeAbility2() {
-	netUpgradeAbility(me(), 0);
+	netUpgradeAbility(me(), 2);
 }
 function btnUpgradeAbility3() {
-	netUpgradeAbility(me(), 0);
+	netUpgradeAbility(me(), 3);
 }
 function btnUpgradeAbility4() {
-	netUpgradeAbility(me(), 0);
+	netUpgradeAbility(me(), 4);
 }
 
 var BTN_GO_TO_UPGRADE_ABILITIES = 'btnGoToUpgradeAbilities';
@@ -1947,18 +2005,12 @@ function setupHeroesUi(heroesParams) {
 		initVisible: true,
 	});
 
-	function isArray(value: Dynamic) {
-		return value.copy != null;
-	}
-
 	function processAbility(heroParams, abilityParams) {
 		if(TDEF) heroParams = THeroParams;
 		if(TDEF) abilityParams = THeroAbilityParams;
 
 
 		var index = heroParams.abilities.indexOf(abilityParams);
-
-		var passiveText = abilityParams.common.passive ? ' passive' : '';
 
 		var levelDescs: Array<Array<String>> = [];
 
@@ -1971,26 +2023,23 @@ function setupHeroesUi(heroesParams) {
 			var fullDesc = config.description;
 
 			if (config.cooldown != null) {
-				fullDesc = fullDesc.concat(['\nCooldown', descArg(config.cooldown), 'sec.']);
+				fullDesc = fullDesc.concat(['\nCooldown', toString(config.cooldown), 'sec.']);
 			}
 			if (config.duration != null) {
-				fullDesc = fullDesc.concat(['\nDuration', descArg(config.duration), 'sec.']);
+				fullDesc = fullDesc.concat(['\nDuration', toString(config.duration), 'sec.']);
 			}
-			fullDesc = fullDesc.concat(['\nCosts', descArg(config.costAmount), txtBr(config.costRes)]);
+			if (config.costAmount != null && config.costRes != null) {
+				fullDesc = fullDesc.concat(['\nCosts', toString(config.costAmount), txtBr(config.costRes)]);
+			}
 
 			levelDescs.push(fullDesc);
 		}
 
-		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability\n';
+		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + '\n';
 
-		function isEq(item1: Dynamic, item2: Dynamic) {
-			var arr1: Array<String> = item1;
-			var arr2: Array<String> = item2;
-			return arr1[0] == arr2[0];
-		}
 		function isEqualItems(index: Int) {
 			for (itemIndex in 0...levelDescs.length - 1) {
-				if (!isEq(levelDescs[itemIndex][index], levelDescs[itemIndex + 1][index])) {
+				if (levelDescs[itemIndex][index] != levelDescs[itemIndex + 1][index]) {
 					return false;
 				}
 			}
@@ -1998,12 +2047,13 @@ function setupHeroesUi(heroesParams) {
 		}
 
 		function handleItem(index:Int) {
-			if (isArray(levelDescs[0][index]) && !isEqualItems(index)) {
-				desc += [for (itemIndex in 0...levelDescs.length) levelDescs[itemIndex][index]].join(' / ') + ' ';
-			} else {
+			if (isEqualItems(index)) {
 				desc += levelDescs[0][index] + ' ';
+			} else {
+				desc += [for (itemIndex in 0...levelDescs.length) levelDescs[itemIndex][index]].join(' / ') + ' ';
 			}
 		}
+
 
 		@sync for (index in 0...levelDescs[0].length) {
 			@async handleItem(index);
@@ -2039,8 +2089,7 @@ function setupHeroesUi(heroesParams) {
 		var config = heroAbilityParamsGetConfig(abilityParams.common, level);
 		var index = heroParams.abilities.indexOf(abilityParams);
 
-		var passiveText = abilityParams.common.passive ? ' passive' : '';
-		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + passiveText + ' ability ' + ' (lvl ' + txtBold(level) + ')\n' + config.description.join(' ');
+		var desc = txtBr(heroParams.unitKind) + ' ' + txtBold(abilityParams.common.name) + ' (' + txtBold('lvl ' + level) + ')\n' + config.description.join(' ');
 		if (config.cooldown != null) {
 			desc += ' Cooldown ' + config.cooldown + ' sec.';
 		}
@@ -2052,11 +2101,11 @@ function setupHeroesUi(heroesParams) {
 		uiItem = {
 			id: null,
 			desc: desc,
-			progress: {
+			progress: abilityParams.common.passive ? null : {
 				initMax: 1,
 				initCurrent: 1,
 			},
-			button: {
+			button: abilityParams.common.passive ? null : {
 				name: abilityParams.common.name + ' (' + config.costAmount + ' ' + txtBr(config.costRes) + ')',
 				action: BTN_ACTIVATE_ABILITY_BASE + index,
 			},
@@ -2132,61 +2181,243 @@ function utilPlayerBuild(plr: Player, kind: BuildingKind): Building {
 	}
 }
 
-function descArg(value: Dynamic): Dynamic {
-	return [value + ''];
+function utilAddAttackPower(hero, percent: Float, duration: Float) {
+	if(TDEF) hero = THeroPartial;
+
+	var value = percent * CDB.POWER_PERCENT_PER_FAME;
+	hero.player.addResource(Resource.Fame, value);
+
+	if (duration != null) {
+		wait(duration);
+		hero.player.addResource(Resource.Fame, value * -1);
+	}
+}
+
+function lvlIndex(level: Int, length: Int): Int {
+	if (level == 0) return null;
+	return level > length ? (length - 1) : (level - 1);
 }
 
 // heroes
+function _heroBerserkerCommonState(hero) {
+	if(TDEF) hero = THeroPartial;
+	if(TDEF) return {
+		wolf: TUnit
+	};
 
+	return hero.commonState;
+}
 function _heroBerserkerAbilityWolfsConfig(level: Int) {
 	return {
-		wolfsCount: intByLevel(level, [2, 3, 4, 5]),
+		wolfUnit: [
+			Unit.Wolf,
+			Unit.SacredWolf,
+			Unit.WhiteWolf,
+			Unit.SpectralWolf
+		][lvlIndex(level, 4)],
 	}
 }
 var HeroBerserkerAbilityWolfs = THeroAbilityParams;
 HeroBerserkerAbilityWolfs = {
 	common: {
-		name: 'Wolfs master',
+		name: 'Wolf master',
 		passive: false,
 		sound: {
 			uiSfx: null,
 			unitSfx: EntitySoundWolfSpawn,
-			volume: 20,
+			volume: 10,
 		},
 		configByLevel: function _(level: Int) {
 			var config = _heroBerserkerAbilityWolfsConfig(level);
 			return {
 				costRes: Resource.Food,
-				costAmount: intByLevel(level, [20, 25, 30, 35]),
+				costAmount: [20, 25, 30, 35][lvlIndex(level, 4)],
 				cooldown: 30,
 				duration: null,
-				description: ['Create', descArg(config.wolfsCount), txtBr(Unit.WhiteWolf) + '.'],
+				description: ['Creates', txtBr(config.wolfUnit), '.'],
 			};
 		},
 		uiItemByLevelIndex: null,
 		uiUpgradeItem: null,
 	},
 	create: function _(hero, params) {
-		var wolfs = TDEF? [TUnit] : [];
-
 		return {
+			check: function check(level: Int) {
+				if (hero.unit.zone == null) return '';
+			},
 			activate: function activate(level: Int, duration: Float) {
+				var commonState = _heroBerserkerCommonState(hero);
 				var config = _heroBerserkerAbilityWolfsConfig(level);
 
-				for (unit in wolfs) {
-					unit.owner = null;
-					unit.remove();
+				if (commonState.wolf != null) {
+					commonState.wolf.owner = null;
+					commonState.wolf.remove();
 				}
 
-				if (hero.unit != null && hero.unit.zone != null) {
-					wolfs = hero.unit.zone.addUnit(Unit.WhiteWolf, config.wolfsCount, hero.player, false);
+				commonState.wolf = hero.unit.zone.addUnit(config.wolfUnit, 1, hero.player, false)[0];
+				commonState.wolf.owner = hero.player;
 
-					utilMoveUnits(wolfs, hero.unit, 5);
+				utilMoveUnits([commonState.wolf], hero.unit, 5);
+			},
+			upgrade: null,
+		}
+	}
+}
 
-					for (unit in wolfs) {
-						unit.owner = hero.player;
-					}
+function _heroBerserkerAbilityBlinkConfig(level: Int) {
+	return {
+		attackIncrease: [60, 80, 100, 120][lvlIndex(level, 4)],
+	};
+}
+var HeroBerserkerAbilityBlink = THeroAbilityParams;
+HeroBerserkerAbilityBlink = {
+	common: {
+		name: 'Wolf friend',
+		passive: false,
+		sound: {
+			uiSfx: null,
+			unitSfx: EntitySoundBearStomp,
+			volume: 0.5,
+		},
+		configByLevel: function _(level: Int) {
+			var config = _heroBerserkerAbilityBlinkConfig(level);
+			var duration = 3;
+			return {
+				costRes: Resource.Food,
+				costAmount: 15,
+				cooldown: [15, 12, 9, 6][lvlIndex(level, 4)],
+				duration: duration,
+				description: [
+					'Changes you with the wolf, after which you get',
+					config.attackIncrease + '%',
+					'an increase in attack.'
+				],
+			};
+		},
+		uiItemByLevelIndex: null,
+		uiUpgradeItem: null,
+	},
+	create: function _(hero, params) {
+		return {
+			check: function check(level: Int) {
+				var commonState = _heroBerserkerCommonState(hero);
+				if (commonState.wolf == null) {
+					return 'You should have wolf to use this ability!';
 				}
+				if (commonState.wolf.zone != hero.unit.zone) {
+					return 'You should be in same zone with your wolf to use this ability!';
+				}
+			},
+			activate: function activate(level: Int, duration: Float) {
+				var config = _heroBerserkerAbilityBlinkConfig(level);
+				var commonState = _heroBerserkerCommonState(hero);
+
+				var heroPosX = hero.unit.x;
+				var heroPosY = hero.unit.y;
+
+				hero.unit.setPosition(commonState.wolf.x, commonState.wolf.y);
+				commonState.wolf.setPosition(heroPosX, heroPosY);
+
+				@async utilAddAttackPower(hero, config.attackIncrease, duration);
+			},
+			upgrade: null,
+		}
+	}
+};
+
+
+function _heroBerserkerAbilityFoodConfig(level: Int) {
+	return {
+		attackIncrease: [10, 30, 50, 70][lvlIndex(level, 4)],
+	};
+}
+var HeroBerserkerAbilityFood = THeroAbilityParams;
+HeroBerserkerAbilityFood =  {
+	common: {
+		name: 'Hunter',
+		passive: true,
+		sound: null,
+		configByLevel: function _(level: Int) {
+			var config = _heroBerserkerAbilityFoodConfig(level);
+			return {
+				costRes: null,
+				costAmount: null,
+				cooldown: null,
+				duration: null,
+				description: [
+					'You get food for every killed ' + txtBold('animal') + ' and additional',
+					config.attackIncrease + '%',
+					'increase in attack.'
+				],
+			};
+		},
+		uiItemByLevelIndex: null,
+		uiUpgradeItem: null,
+	},
+	create: function _(hero, params) {
+		var currentAttackIncrease = 0;
+		return {
+			check: null,
+			activate: null,
+			upgrade: function upgrade(fromLevel, toLevel) {
+				var toConfig = _heroBerserkerAbilityFoodConfig(toLevel);
+				var attackIncrease = toConfig.attackIncrease - currentAttackIncrease;
+				currentAttackIncrease = toConfig.attackIncrease;
+
+				@async utilAddAttackPower(hero, attackIncrease, null);
+			},
+		}
+	}
+};
+
+
+function _heroBerserkerAbilityCombatTranceConfig(level: Int) {
+	return {
+
+	};
+}
+var HeroBerserkerAbilityCombatTrance = THeroAbilityParams;
+HeroBerserkerAbilityCombatTrance =  {
+	common: {
+		name: 'Combat Trance',
+		passive: false,
+		sound: {
+			uiSfx: null,
+			unitSfx: EntitySoundBerserkerVictory,
+			volume: 2,
+		},
+		configByLevel: function _(level: Int) {
+			return {
+				costRes: Resource.Food,
+				costAmount: 60,
+				cooldown: 60,
+				duration: [5, 7, 9, 11][lvlIndex(level, 4)],
+				description: [
+					'Increase your move and attack speed when you wounded, you can\'t die and heal for every killed unit.'
+				],
+			};
+		},
+		uiItemByLevelIndex: null,
+		uiUpgradeItem: null,
+	},
+	create: function _(hero, params) {
+		var currentAttackIncrease = 0;
+		return {
+			check: null,
+			activate: function activate(level, duration) {
+				var listener = HeroEventGetXPListener(function _(payload) {
+					payload.hero.unit.hitLife -= payload.xp;
+				});
+
+				hero.player.unlockTech(Tech.PainSuppressant, true);
+				hero.unit.setUnitFlag(UnitFlag.CantDie, true);
+				addEventListener(hero.events, listener, false);
+
+				wait(duration);
+
+				hero.player.unlockTech(Tech.PainSuppressant, true);
+				hero.unit.setUnitFlag(UnitFlag.CantDie, false);
+				removeEventListener(hero.events, listener);
 			},
 			upgrade: null,
 		}
@@ -2199,7 +2430,12 @@ HeroBerserker = {
 	unitKind: Unit.Berserker,
 	description: "[Berserker]",
 
-	abilities: [HeroBerserkerAbilityWolfs],
+	abilities: [
+		HeroBerserkerAbilityWolfs,
+		HeroBerserkerAbilityBlink,
+		HeroBerserkerAbilityFood,
+		HeroBerserkerAbilityCombatTrance,
+	],
 
 	init: null,
 
@@ -2218,7 +2454,7 @@ HeroMaiden = {
 	unitKind: Unit.Maiden,
 	description: "[Maiden]",
 
-	abilities: [HeroBerserkerAbilityWolfs],
+	abilities: [],
 
 	init: null,
 
@@ -2246,7 +2482,17 @@ function testMain() {
 		var mainZone = getPlayerMainZone(plr);
 
 		for (zone in ZONES.INIT.next) {
-			var wolfs = zone.addUnit(Unit.Wolf, 5, FOE_PLAYER);
+			// FOE_PLAYER.takeControl(zone);
+			var wolfs = zone.addUnit(Unit.Wolf, 3);
+			// for (wolf in wolfs) {
+			// 	wolf.owner = FOE_PLAYER;
+			// }
+			var warrs = zone.addUnit(Unit.Warrior, 2);
+			for (unit in warrs) {
+				unit.owner = null;
+			}
+
+			// zone.createBuilding(Building.WatchTower, true, {creator: FOE_PLAYER});
 
 			me().discoverZone(zone);
 		}
