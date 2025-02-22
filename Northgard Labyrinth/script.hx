@@ -440,16 +440,16 @@ var TUIRenderQueueMap = TDEF? (function _() {
 var _uiActiveRenderQueueMap = TDEF? TUIRenderQueueMap : makeStringMap();
 
 function _uiApplyRender(plr: Player) {
-	var playerRenderQueue = _uiRenderQueueMap.get(player.name);
+	var playerRenderQueue = _uiRenderQueueMap.get(plr.name);
 	if (playerRenderQueue == null) {
 		return;
 	}
-	_uiRenderQueueMap.remove(player.name);
+	_uiRenderQueueMap.remove(plr.name);
 
-	var activeRenderQueue = _uiActiveRenderQueueMap.get(player.name);
+	var activeRenderQueue = _uiActiveRenderQueueMap.get(plr.name);
 	if (activeRenderQueue == null) {
 		activeRenderQueue = [];
-		_uiActiveRenderQueueMap.set(player.name, activeRenderQueue);
+		_uiActiveRenderQueueMap.set(plr.name, activeRenderQueue);
 	}
 
 	activeRenderQueue.push(playerRenderQueue);
@@ -460,7 +460,7 @@ function _uiApplyRender(plr: Player) {
 }
 
 function _uiStartRenderer(plr: Player) {
-	var activeRenderQueue = _uiActiveRenderQueueMap.get(player.name);
+	var activeRenderQueue = _uiActiveRenderQueueMap.get(plr.name);
 	if (activeRenderQueue == null) {
 		return;
 	}
@@ -1868,7 +1868,7 @@ function _netSelectHero(plr: Player, heroId: String) {
 	function handleHero(heroParams) {
 		if(TDEF) heroParams = THeroParams;
 
-		drakkar(me(), ZONES.INIT, ZONES.INIT_WATER, 0, 0, [heroParams.unitKind]);
+		drakkar(plr, ZONES.INIT, ZONES.INIT_WATER, 0, 0, [heroParams.unitKind]);
 		var unit = plr.getUnit(heroParams.unitKind);
 
 		HEROES.push(
@@ -2494,7 +2494,7 @@ function testMain() {
 
 			// zone.createBuilding(Building.WatchTower, true, {creator: FOE_PLAYER});
 
-			me().discoverZone(zone);
+			plr.discoverZone(zone);
 		}
 	}
 
@@ -2574,15 +2574,16 @@ function dialogIntro() {
 
 function init() {
 	setupGlobalVars();
+	@async setupGlobal();
 
 	if (state.time == 0) {
 		if (isHost()) {
 			@async setupHeroesUi(HEROES_PARAMS);
 			@async setupHubUi();
 			@async main();
-			@async setupGlobal();
 			@async testMain();
 			@async uiApplyOrderItems(UI_QUEUE.SELECT_HERO);
+			@async setupGlobalAsync();
 		}
 
 		@async dialogIntro();
@@ -2595,6 +2596,15 @@ function init() {
 // #region Setup
 
 function setupGlobal() {
+	addRule(Rule.NoBuildUI);
+	addRule(Rule.NoAllUnitUI);
+	// does not work for client in multiplayer
+	// addRule(Rule.HidePlayerList);
+}
+
+function setupGlobalAsync() {
+	wait(0);
+
 	noEvent();
 
 	state.removeVictory(Victory.Fame);
@@ -2608,21 +2618,12 @@ function setupGlobal() {
 	addRule(Rule.NoMilitPaths);
 	addRule(Rule.NoResourceLore);
 	addRule(Rule.NoWinter);
-	addRule(Rule.NoBuildUI);
-	addRule(Rule.NoAllUnitUI);
 	addRule(Rule.NoZoneInfo);
-	addRule(Rule.HidePlayerList);
 	addRule(Rule.NoWarbandCap);
 	addRule(Rule.NoBurnBuilding);
 	addRule(Rule.RimesteelReplaceIron);
 
 	@sync for (plr in USER_PLAYERS) {
-		for (plrZone in state.players) {
-			for (zone in plrZone.zones) {
-				@async plr.coverZone(zone);
-			}
-		}
-
 		plr.clan = Clan.Bear;
 
 		@async plr.unlockTech(Tech.BearAwake, true);
