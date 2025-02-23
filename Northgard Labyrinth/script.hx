@@ -889,6 +889,12 @@ function _netArgs2(arg1: Dynamic, arg2: Dynamic): Array<Dynamic> {
 function _netArgs3(arg1: Dynamic, arg2: Dynamic, arg3: Dynamic): Array<Dynamic> {
 	return [arg1, arg2, arg3];
 }
+function _netArgs4(arg1: Dynamic, arg2: Dynamic, arg3: Dynamic, arg4: Dynamic): Array<Dynamic> {
+	return [arg1, arg2, arg3, arg4];
+}
+function _netArgs5(arg1: Dynamic, arg2: Dynamic, arg3: Dynamic, arg4: Dynamic, arg5: Dynamic): Array<Dynamic> {
+	return [arg1, arg2, arg3, arg4, arg5];
+}
 
 function netMoveCamera(plr: Player, target: {x: Float, y: Float}, speed: Float) {
 	invoke(plr, '_netMoveCamera', _netArgs2(target, speed));
@@ -897,9 +903,38 @@ function netMoveCameraAll(target: {x: Float, y: Float}, speed: Float) {
 	invokeAll('_netMoveCamera', _netArgs2(target, speed));
 }
 function _netMoveCamera(target: {x: Float, y: Float}, speed: Float) {
-	@async moveCamera(target, speed);
+	moveCamera(target, speed);
 }
 
+function netSetCamera(plr: Player, target: Entity) {
+	invoke(plr, '_netSetCamera', _netArgs1(target));
+}
+function netSetCameraAll(target: Entity) {
+	invokeAll('_netSetCamera', _netArgs1(target));
+}
+function _netSetCamera(target: Entity) {
+	setCamera(target);
+}
+
+function netSetZoom(plr: Player, index: Int) {
+	invoke(plr, '_netSetZoom', _netArgs1(index));
+}
+function netSetZoomAll(index: Int) {
+	invokeAll('_netSetZoom', _netArgs1(index));
+}
+function _netSetZoom(index: Int) {
+	setZoom(index);
+}
+
+function netShakeCamera(plr: Player, big: Bool) {
+	invoke(plr, '_netShakeCamera', _netArgs1(big));
+}
+function netShakeCameraAll(big: Bool) {
+	invokeAll('_netShakeCamera', _netArgs1(big));
+}
+function _netShakeCamera(big: Bool) {
+	shakeCamera(big);
+}
 
 function netGenericNotify(plr: Player, text: String, target: Entity) {
 	invoke(plr, '_netGenericNotify', _netArgs2(text, target));
@@ -1041,7 +1076,7 @@ var UI_QUEUE = {
 	INIT: TDEF? TUIQueueNameEnum
 		:{queue: 'INIT', pageSize: null},
 	SELECT_HERO: TDEF? TUIQueueNameEnum
-		:{queue: 'SELECT_HERO', pageSize: 8},
+		:{queue: 'SELECT_HERO', pageSize: 6},
 	HUB: TDEF? TUIQueueNameEnum
 		:{queue: 'HUB', pageSize: null},
 	MAIN: TDEF? TUIQueueNameEnum
@@ -1049,7 +1084,7 @@ var UI_QUEUE = {
 	UPGRADE_ABILITIES: TDEF? TUIQueueNameEnum
 		:{queue: 'UPGRADE_ABILITIES', pageSize: null},
 	SHOP: TDEF? TUIQueueNameEnum
-		:{queue: 'SHOP', pageSize: 5},
+		:{queue: 'SHOP', pageSize: 6},
 }
 
 var UI_ORDER = {
@@ -1193,16 +1228,18 @@ function stopUpdate(eventListener) {
 
 // #region Hero Class
 
-var THeroPartial = TDEF? {
+var THero = TDEF? {
 	unitKind: TUnitKind,
 	player: TPlayer,
 	unit: TUnit,
+	summonedUnits: [TUnit],
 	events: TEventEmitter,
 	commonState: TDynamic,
 
+	level: TInt,
 	isAlive: TBool,
 	lastZone: TZone,
-	level: TInt,
+	lastXP: TFloat,
 } :null;
 
 
@@ -1256,7 +1293,7 @@ var THeroAbilityCallbacks = {
 }
 
 function FnHeroAbilityCreate (hero, params) {
-	hero = THeroPartial;
+	hero = THero;
 	params = THeroAbilityCommonParams;
 	return THeroAbilityCallbacks;
 }
@@ -1268,7 +1305,7 @@ var THeroAbilityParams = TDEF? {
 
 function NewHeroAbility(abilityParams, hero) {
 	if(TDEF) abilityParams = THeroAbilityParams;
-	if(TDEF) hero = THeroPartial;
+	if(TDEF) hero = THero;
 	if(TDEF) return THeroAbility;
 
 	FnHeroAbilityCreate = abilityParams.create;
@@ -1333,7 +1370,7 @@ function _heroAbilityGetNextState(ability) {
 }
 
 function _heroAbilityProcessState(hero, ability, config) {
-	if(TDEF) hero = THeroPartial;
+	if(TDEF) hero = THero;
 	if(TDEF) ability = THeroAbility;
 	if(TDEF) config = THeroAbilityConfig;
 
@@ -1349,9 +1386,11 @@ function _heroAbilityProcessState(hero, ability, config) {
 				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Empty);
 			case HERO_ABILITY_STATE.ACTIVE:
 				@async hero.player.objectives.setGoalVal(uiItem.id, config.duration);
-				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Done);
+				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Missed);
 			case HERO_ABILITY_STATE.COOLDOWN:
 				@async hero.player.objectives.setGoalVal(uiItem.id, config.cooldown);
+				// set empty to enable "pop" effect in ui after active state
+				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Empty);
 				@async hero.player.objectives.setStatus(uiItem.id, OStatus.Missed);
 		}
 		ability.state = nextState;
@@ -1368,7 +1407,7 @@ function _heroAbilityProcessState(hero, ability, config) {
 }
 
 function _heroAbilityActivate(hero, ability) {
-	if(TDEF) hero = THeroPartial;
+	if(TDEF) hero = THero;
 	if(TDEF) ability = THeroAbility;
 
 	if (ability.state != HERO_ABILITY_STATE.READY || ability.activate == null || !hero.isAlive) {
@@ -1399,7 +1438,7 @@ function _heroAbilityActivate(hero, ability) {
 }
 
 function _heroAbilityUpgrade(hero, ability) {
-	if(TDEF) hero = THeroPartial;
+	if(TDEF) hero = THero;
 	if(TDEF) ability = THeroAbility;
 
 	if (ability.level >= MAX_ABILITY_LEVEL) {
@@ -1413,7 +1452,7 @@ function _heroAbilityUpgrade(hero, ability) {
 
 	@async hero.player.objectives.setCurrentVal(ability.params.uiUpgradeItem.id, nextLevel);
 	if (nextLevel >= MAX_ABILITY_LEVEL) {
-	@async hero.player.objectives.setStatus(ability.params.uiUpgradeItem.id, OStatus.Done);
+		@async hero.player.objectives.setStatus(ability.params.uiUpgradeItem.id, OStatus.Missed);
 	}
 
 	@async uiSetItemsVisible(hero.player, [ability.params.uiItemByLevelIndex[prevLevel - 1]], false);
@@ -1426,7 +1465,7 @@ function _heroAbilityUpgrade(hero, ability) {
 }
 
 function FnHeroParamsInit(hero) {
-	hero = THeroPartial;
+	hero = THero;
 }
 
 var THeroParams = TDEF? {
@@ -1441,13 +1480,14 @@ var THeroParams = TDEF? {
 	selectUiItem: TUIItem,
 } :null;
 
-var THero = TDEF? {
+var THeroFull = TDEF? {
 	params: THeroParams,
 
 	unitKind: TUnitKind,
 
 	player: TPlayer,
 	unit: TUnit,
+	summonedUnits: [TUnit],
 
 	commonState: TDynamic,
 
@@ -1503,7 +1543,7 @@ function HeroEventReviveData(payload) {
 }
 
 var HeroEventLevelUpType = 'hero:levelUp';
-var THeroEventLevelUpPayload = TDEF? { hero: THero } :null;
+var THeroEventLevelUpPayload = TDEF? { hero: THeroFull } :null;
 function HeroEventLevelUpListener (callback) {
 	if(TDEF) callback = function _(payload): Void { payload = THeroEventLevelUpPayload; };
 	if(TDEF) return TEventListener;
@@ -1522,7 +1562,7 @@ function HeroEventLevelUpData(payload) {
 }
 
 var HeroEventZoneChangeType = 'hero:zoneChange';
-var THeroEventZoneChangePayload = TDEF? { hero: THero, prevZone: TZone } :null;
+var THeroEventZoneChangePayload = TDEF? { hero: THeroFull, prevZone: TZone } :null;
 function HeroEventZoneChangeListener (callback) {
 	if(TDEF) callback = function _(payload): Void { payload = THeroEventZoneChangePayload; };
 	if(TDEF) return TEventListener;
@@ -1541,7 +1581,7 @@ function HeroEventZoneChangeData(payload) {
 }
 
 var HeroEventGetXPType = 'hero:getXP';
-var THeroEventGetXPPayload = TDEF? { hero: THero, xp: TFloat } :null;
+var THeroEventGetXPPayload = TDEF? { hero: THeroFull, xp: TFloat } :null;
 function HeroEventGetXPListener (callback) {
 	if(TDEF) callback = function _(payload): Void { payload = THeroEventGetXPPayload; };
 	if(TDEF) return TEventListener;
@@ -1561,9 +1601,14 @@ function HeroEventGetXPData(payload) {
 
 // Hero Init
 
+function heroRestoreFood(hero) {
+	if(TDEF) hero = THero;
+
+	hero.player.addResource(Resource.Food, 1000);
+}
 
 function _heroRevive(hero) {
-	if(TDEF) hero = THero;
+	if(TDEF) hero = THeroFull;
 
 	if (hero.isAlive || hero.lastZone == null) {
 		return;
@@ -1580,6 +1625,8 @@ function _heroRevive(hero) {
 		hero.unit.rotation = diedHero.rotation;
 	}
 
+	@async heroRestoreFood(hero);
+
 	@async netMoveCamera(hero.player, {x: hero.unit.x, y: hero.unit.y}, null);
 
 	for (plr in USER_PLAYERS) {
@@ -1593,7 +1640,7 @@ function _heroRevive(hero) {
 }
 
 function _heroDie(hero) {
-	if(TDEF) hero = THero;
+	if(TDEF) hero = THeroFull;
 
 	if (!hero.isAlive) {
 		return;
@@ -1636,7 +1683,7 @@ function _heroDie(hero) {
 }
 
 function _heroLevelUp(hero) {
-	if(TDEF) hero = THero;
+	if(TDEF) hero = THeroFull;
 
 	if (hero.level * CDB.XP_PER_LEVEL > hero.player.getResource(Resource.MilitaryXP)) {
 		return;
@@ -1662,15 +1709,16 @@ function _heroLevelUp(hero) {
 
 function NewHero(heroParams, plr: Player, unit: Unit) {
 	if(TDEF) heroParams = THeroParams;
-	if(TDEF) return THero;
+	if(TDEF) return THeroFull;
 
-	var hero = THero;
+	var hero = THeroFull;
 	hero = {
 		params: heroParams,
 		unitKind: heroParams.unitKind,
 		player: plr,
 		unit: unit,
 
+		summonedUnits: [],
 		commonState: {},
 		abilities: [],
 		events: NewEventEmitter(),
@@ -1736,7 +1784,7 @@ function NewHero(heroParams, plr: Player, unit: Unit) {
 }
 
 function heroActivateAbility(hero, abilityIndex: Int) {
-	if(TDEF) hero = THero;
+	if(TDEF) hero = THeroFull;
 
 	var ability = hero.abilities[abilityIndex];
 
@@ -1788,7 +1836,7 @@ function heroActivateAbility(hero, abilityIndex: Int) {
 }
 
 function heroUpgradeAbility(hero, abilityIndex: Int) {
-	if(TDEF) hero = THero;
+	if(TDEF) hero = THeroFull;
 
 	var ability = hero.abilities[abilityIndex];
 
@@ -1813,11 +1861,43 @@ function heroUpgradeAbility(hero, abilityIndex: Int) {
 	@async _heroAbilityUpgrade(hero, ability);
 }
 
+function _heroCheckSummonedUnits(hero) {
+	if(TDEF) hero = THero;
+
+	function handleUnit(unit: Unit) {
+		if (unit.isRemoved()) {
+			hero.summonedUnits.remove(unit);
+		}
+	}
+
+	@sync for (unit in hero.summonedUnits) {
+		@async handleUnit(unit);
+	}
+}
+
+function heroAddSummonedUnits(hero, units: Array<Unit>) {
+	if(TDEF) hero = THero;
+
+	@sync for (unit in units) {
+		@async hero.summonedUnits.push(unit);
+	}
+
+	@async _heroCheckSummonedUnits(hero);
+}
+
+function heroGetSummonedUnits(hero) {
+	if(TDEF) hero = THero;
+
+	@async _heroCheckSummonedUnits(hero);
+
+	return hero.summonedUnits;
+}
+
 // Global Vars
 
 var HEROES_PARAMS = TDEF? [THeroParams] : [];
 
-var HEROES = TDEF? [THero] : [];
+var HEROES = TDEF? [THeroFull] : [];
 
 function getHeroByPlayer(plr: Player) {
 	for (hero in HEROES) {
@@ -2182,7 +2262,7 @@ function utilPlayerBuild(plr: Player, kind: BuildingKind): Building {
 }
 
 function utilAddAttackPower(hero, percent: Float, duration: Float) {
-	if(TDEF) hero = THeroPartial;
+	if(TDEF) hero = THero;
 
 	var value = percent * CDB.POWER_PERCENT_PER_FAME;
 	hero.player.addResource(Resource.Fame, value);
@@ -2200,7 +2280,7 @@ function lvlIndex(level: Int, length: Int): Int {
 
 // heroes
 function _heroBerserkerCommonState(hero) {
-	if(TDEF) hero = THeroPartial;
+	if(TDEF) hero = THero;
 	if(TDEF) return {
 		wolf: TUnit
 	};
@@ -2257,6 +2337,8 @@ HeroBerserkerAbilityWolfs = {
 				commonState.wolf = hero.unit.zone.addUnit(config.wolfUnit, 1, hero.player, false)[0];
 				commonState.wolf.owner = hero.player;
 
+				@async heroAddSummonedUnits(hero, [commonState.wolf]);
+
 				utilMoveUnits([commonState.wolf], hero.unit, 5);
 			},
 			upgrade: null,
@@ -2304,9 +2386,9 @@ HeroBerserkerAbilityBlink = {
 				if (commonState.wolf == null) {
 					return 'You should have wolf to use this ability!';
 				}
-				if (commonState.wolf.zone != hero.unit.zone) {
-					return 'You should be in same zone with your wolf to use this ability!';
-				}
+				// if (commonState.wolf.zone != hero.unit.zone) {
+				// 	return 'You should be in same zone with your wolf to use this ability!';
+				// }
 			},
 			activate: function activate(level: Int, duration: Float) {
 				var config = _heroBerserkerAbilityBlinkConfig(level);
@@ -2315,7 +2397,9 @@ HeroBerserkerAbilityBlink = {
 				var heroPosX = hero.unit.x;
 				var heroPosY = hero.unit.y;
 
+				hero.unit.pauseJob(true);
 				hero.unit.setPosition(commonState.wolf.x, commonState.wolf.y);
+				commonState.wolf.pauseJob(true);
 				commonState.wolf.setPosition(heroPosX, heroPosY);
 
 				@async utilAddAttackPower(hero, config.attackIncrease, duration);
@@ -2519,7 +2603,7 @@ function testMain() {
 // #region Dialogs
 
 function dialogIntro() {
-	wait(0.5);
+	wait(0.2);
 
 	setCamera(ZONES.INIT);
 	setZoom(1);
@@ -2528,7 +2612,9 @@ function dialogIntro() {
 
 	var unit: Unit;
 	if (isHost()) {
-		var unit = spawnUnit(ZONES.INIT, FOE_PLAYER, Unit.UndeadGiantDragon, ZONES.INIT.x, ZONES.INIT.y, ZONES.INIT.x + 1, ZONES.INIT.y + 1);
+		unit = spawnUnit(ZONES.INIT, FOE_PLAYER, Unit.UndeadGiantDragon, ZONES.INIT.x, ZONES.INIT.y, ZONES.INIT.x + 1, ZONES.INIT.y + 1);
+		unit.setUnitFlag(UnitFlag.IsInvincible, true);
+		unit.setUnitFlag(UnitFlag.CantDie, true);
 
 		@async effectExplosion(ZONES.INIT, unit);
 		@async playAnim(unit, 'victory', false, true);
@@ -2539,7 +2625,7 @@ function dialogIntro() {
 		font: FontKind.BigTitle,
 	};
 
-	sfx(UiSfx.Horn);
+	sfx(UiSfx.Horn, 1);
 
 	talk(
 		'Welcome to the Northgard Labyrinth!',
@@ -2574,12 +2660,13 @@ function dialogIntro() {
 
 function init() {
 	setupGlobalVars();
-	@async setupGlobal();
+	@async setupEachPlayer();
 
 	if (state.time == 0) {
 		if (isHost()) {
 			@async setupHeroesUi(HEROES_PARAMS);
 			@async setupHubUi();
+			@async setupGlobal();
 			@async main();
 			@async testMain();
 			@async uiApplyOrderItems(UI_QUEUE.SELECT_HERO);
@@ -2595,17 +2682,30 @@ function init() {
 
 // #region Setup
 
+function setupEachPlayer() {
+	var plr = me();
+
+	@async {
+		for (plrZone in state.players) {
+			for (zone in plrZone.zones) {
+				@async plr.coverZone(zone);
+			}
+		}
+	}
+}
+
 function setupGlobal() {
+	noEvent();
+
 	addRule(Rule.NoBuildUI);
 	addRule(Rule.NoAllUnitUI);
+	addRule(Rule.NoZoneInfo);
 	// does not work for client in multiplayer
 	// addRule(Rule.HidePlayerList);
 }
 
 function setupGlobalAsync() {
 	wait(0);
-
-	noEvent();
 
 	state.removeVictory(Victory.Fame);
 	state.removeVictory(Victory.Lore);
@@ -2618,7 +2718,6 @@ function setupGlobalAsync() {
 	addRule(Rule.NoMilitPaths);
 	addRule(Rule.NoResourceLore);
 	addRule(Rule.NoWinter);
-	addRule(Rule.NoZoneInfo);
 	addRule(Rule.NoWarbandCap);
 	addRule(Rule.NoBurnBuilding);
 	addRule(Rule.RimesteelReplaceIron);
@@ -2631,6 +2730,12 @@ function setupGlobalAsync() {
 		@async plr.addBonus({id: ConquestBonus.BResBonus, resId: Resource.Food, isAdvanced: false });
 		@async plr.addBonus({id: ConquestBonus.BPopulation, isAdvanced: false});
 		@async plr.setResource(Resource.Gemstone, CONFIG.START_LIVES);
+	}
+
+	for (plr in state.players) {
+		if (plr.isAI && plr != ALLY_PLAYER && plr != FOE_PLAYER) {
+			plr.customDefeat('');
+		}
 	}
 }
 
